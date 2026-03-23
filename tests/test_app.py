@@ -152,6 +152,33 @@ class LogicParserRegressionTestCase(unittest.TestCase):
             "Elbow",
         )
 
+    def test_classify_fitting_type_with_legend_prioritizes_short_sweep_override(self):
+        legend_maps = ({"SHORT SWEEP COMBO": "Coupling"}, {}, {}, {}, set())
+
+        self.assertEqual(
+            logic_mod.classify_fitting_type_with_legend("6 in Short Sweep 90", legend_maps),
+            "Elbow",
+        )
+
+    def test_classify_fitting_type_with_legend_prioritizes_combination_override(self):
+        legend_maps = ({"COMBINATION WYE": "Wye"}, {}, {}, {}, set())
+
+        self.assertEqual(
+            logic_mod.classify_fitting_type_with_legend("4 in Combination Wye", legend_maps),
+            "Tee",
+        )
+
+    def test_classify_fitting_type_with_legend_maps_specific_ferrule_to_cap(self):
+        legend_maps = ({}, {}, {}, {}, set())
+
+        self.assertEqual(
+            logic_mod.classify_fitting_type_with_legend(
+                "Charlotte NoNH 52 S Tapped Ferrule with Southern Raised-Head Brass Plug ",
+                legend_maps,
+            ),
+            "Cap",
+        )
+
     def test_material_type_from_material_uses_legacy_aliases(self):
         materials = ["Copper", "PVC", "Nickel iron"]
 

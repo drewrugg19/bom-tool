@@ -310,7 +310,23 @@ def strip_manufacturer_prefix(desc: str, manufacturers_norm: set) -> str:
     return n
 
 
+def fitting_type_override(description: str) -> str | None:
+    u = str(description or "").upper()
+    if not u:
+        return None
+    if "SHORT SWEEP" in u:
+        return "Elbow"
+    if "COMBINATION" in u:
+        return "Tee"
+    if "CHARLOTTE NONH 52 S TAPPED FERRULE WITH SOUTHERN RAISED HEAD BRASS PLUG" in _norm_text(description):
+        return "Cap"
+    return None
+
+
 def classify_fitting_type(description: str) -> str:
+    override = fitting_type_override(description)
+    if override:
+        return override
     u = str(description or "").upper()
     if "UNION" in u:
         return "Union"
@@ -344,6 +360,9 @@ def classify_fitting_type(description: str) -> str:
 
 
 def classify_fitting_type_with_legend(description: str, legend_maps=None) -> str:
+    override = fitting_type_override(description)
+    if override:
+        return override
     if legend_maps is None:
         legend_maps = load_legend_maps()
     concat_map, concat_map_ns, desc_map, desc_map_ns, manufacturers_norm = legend_maps
