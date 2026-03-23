@@ -15,6 +15,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+from werkzeug.security import check_password_hash, generate_password_hash
 
 # Embedded legend (optional - place legend_embedded.py next to this file or in project root)
 try:
@@ -23,7 +24,8 @@ except Exception:
     legend_embedded = None
 
 APP_NAME    = "Fabrication BOM Tool"
-APP_VERSION = "2026.3.2"
+APP_VERSION = "2026.3.3"
+DEFAULT_ADMIN_PASSWORD = "FBT2026!"
 
 # ============================
 # Paths
@@ -259,124 +261,97 @@ def load_legend_maps():
                 cmn = p.get("concat_nospace", {}) or {}
                 dm  = p.get("desc", {}) or {}
                 dmn = p.get("desc_nospace", {}) or {}
-                mfg = set(p.get("mfg", []) or [])
-                if all(isinstance(x, dict) for x in (cm,cmn,dm,dmn)):
-                    return cm, cmn, dm, dmn, mfg
+                mfg = set(p.get("manufacturers", []) or [])
+                if isinstance(cm, dict) and (cm or cmn or dm or dmn):
+                    return cm, cmn, dm, dmn, set(map(_norm_text, mfg))
     except Exception:
         pass
-    # 2) Cache
+
+    # 2) Cached JSON
     try:
         if LEGEND_CACHE_PATH.exists():
-            data = json.loads(LEGEND_CACHE_PATH.read_text(encoding="utf-8"))
-            cm  = data.get("concat", {}) or {}
-            cmn = data.get("concat_nospace", {}) or {}
-            dm  = data.get("desc", {}) or {}
-            dmn = data.get("desc_nospace", {}) or {}
-            mfg = set(data.get("mfg", []) or [])
-            if isinstance(cm, dict) and isinstance(dm, dict):
-                return cm, cmn, dm, dmn, mfg
+            p = json.loads(LEGEND_CACHE_PATH.read_text(encoding="utf-8"))
+            cm  = p.get("concat", {}) or {}
+            cmn = p.get("concat_nospace", {}) or {}
+            dm  = p.get("desc", {}) or {}
+            dmn = p.get("desc_nospace", {}) or {}
+            mfg = set(p.get("manufacturers", []) or [])
+            if isinstance(cm, dict) and (cm or cmn or dm or dmn):
+                return cm, cmn, dm, dmn, set(map(_norm_text, mfg))
     except Exception:
         pass
-    # 3) XLSX
-    try:
-        if LEGEND_XLSX_PATH.exists():
-            cm, dm, mfg = build_legend_maps_from_xlsx(LEGEND_XLSX_PATH)
-            cmn = {_norm_text_nospace(k): v for k, v in cm.items() if _norm_text_nospace(k)}
-            dmn = {_norm_text_nospace(k): v for k, v in dm.items() if _norm_text_nospace(k)}
-            try:
-                LEGEND_CACHE_PATH.write_text(json.dumps({"concat":cm,"concat_nospace":cmn,"desc":dm,"desc_nospace":dmn,"mfg":sorted(list(mfg))},indent=2),encoding="utf-8")
-            except Exception:
-                pass
-            return cm, cmn, dm, dmn, mfg
-    except Exception:
-        pass
+
+    # 3) Legacy XLSX fallback
+    if LEGEND_XLSX_PATH.exists():
+        cm, dm, mfg = build_legend_maps_from_xlsx(LEGEND_XLSX_PATH)
+        cmn = {_norm_text_nospace(k): v for k, v in cm.items()}
+        dmn = {_norm_text_nospace(k): v for k, v in dm.items()}
+        return cm, cmn, dm, dmn, mfg
+
     return {}, {}, {}, {}, set()
 
 
-def strip_manufacturer_prefix(desc: str, manufacturers_norm: set) -> str:
-    raw = str(desc or "").strip()
-    if not raw: return ""
-    n = _norm_text(raw)
-    if not n: return ""
-    parts = n.split(" ")
-    for k in range(4, 0, -1):
-        prefix = " ".join(parts[:k]).strip()
-        if prefix in manufacturers_norm:
-            remainder = " ".join(parts[k:]).strip()
-            return remainder or n
-    return n
+def classify_fitting(description: str, manufacturers: set, concat_map: dict, concat_map_ns: dict, desc_map: dict, desc_map_ns: dict) -> str:
+    raw = clean_token(description)
+    if not raw:
+        return "Unclassified"
 
+    norm = _norm_text(raw)
+    norm_ns = _norm_text_nospace(raw)
 
-def classify_fitting_type_with_legend(description: str) -> str:
-    concat_map, concat_map_ns, desc_map, desc_map_ns, manufacturers_norm = load_legend_maps()
-    raw = str(description or "").strip()
-    if not raw: return "Unclassified"
-    n1 = _norm_text(raw)
-    if n1:
-        ft = concat_map.get(n1)
-        if ft: return ft
-    n1n = _norm_text_nospace(raw)
-    if n1n:
-        ft = concat_map_ns.get(n1n)
-        if ft: return ft
-    stripped = strip_manufacturer_prefix(raw, manufacturers_norm)
-    n2  = _norm_text(stripped)
-    n2n = _norm_text_nospace(stripped)
-    if n2:
-        ft = concat_map.get(n2) or desc_map.get(n2)
-        if ft: return ft
-    if n2n:
-        ft = concat_map_ns.get(n2n) or desc_map_ns.get(n2n)
-        if ft: return ft
-    return classify_fitting_type(raw)
+    if norm in desc_map:
+        return desc_map[norm]
+    if norm_ns in desc_map_ns:
+        return desc_map_ns[norm_ns]
+    if norm in concat_map:
+        return concat_map[norm]
+    if norm_ns in concat_map_ns:
+        return concat_map_ns[norm_ns]
 
+    # strip manufacturer prefix if present
+    tokens = norm.split()
+    if tokens and manufacturers:
+        for n in range(min(3, len(tokens)), 0, -1):
+            prefix = " ".join(tokens[:n])
+            if prefix in manufacturers:
+                trimmed = " ".join(tokens[n:]).strip()
+                trimmed_ns = _norm_text_nospace(trimmed)
+                if trimmed in desc_map:
+                    return desc_map[trimmed]
+                if trimmed_ns in desc_map_ns:
+                    return desc_map_ns[trimmed_ns]
+                if trimmed in concat_map:
+                    return concat_map[trimmed]
+                if trimmed_ns in concat_map_ns:
+                    return concat_map_ns[trimmed_ns]
+                break
 
-def classify_fitting_type(description: str) -> str:
-    u = str(description).upper()
-    if "UNION"   in u: return "Union"
-    if "OLET"    in u or "WELDOLET" in u or "THREDOLET" in u or "SOCKOLET" in u: return "Olet"
-    if "FLANGE"  in u: return "Flange"
-    if "SLEEVE"  in u: return "Sleeve"
-    if "NIPPLE"  in u: return "Nipple"
-    if "CAP"     in u: return "Cap"
-    if "PIPE"    in u: return "Pipe"
-    if "COUPLING" in u: return "Coupling"
-    if "TEE"     in u: return "Tee"
-    if "WYE"     in u: return "Wye"
-    if "ELBOW"   in u or "ELL" in u or "BEND" in u: return "Elbow"
-    if "REDUCER" in u or "BUSHING" in u: return "Reducer"
-    if "VALVE"   in u: return "Valve"
-    if "ADAPTER" in u: return "Adapter"
     return "Unclassified"
 
 # ============================
-# Material matching
+# Material normalization / matching
 # ============================
 
 def normalize_material_token(s: str) -> str:
-    s = str(s or "").upper().replace("&"," AND ")
-    s = re.sub(r"[^A-Z0-9\s]"," ",s)
-    return re.sub(r"\s+"," ",s).strip()
+    s = _norm_text(s)
+    s = s.replace("POLYPROPELENE", "POLYPROPYLENE")
+    return s
 
 
-def build_material_alias_map(material_types: list) -> dict:
+def build_material_alias_map(known_material_types: list) -> dict:
     alias = {}
-    if not isinstance(material_types, list): return alias
     canon_norm = {}
-    for canonical in material_types:
-        c = str(canonical or "").strip()
-        if not c: continue
-        n  = normalize_material_token(c)
-        ns = _norm_text_nospace(c)
-        if n:  canon_norm[n] = c
-        alias[n]  = c
-        alias[ns] = c
-        first = n.split(" ")[0] if n else ""
-        if first: alias.setdefault(first, c)
+    for m in known_material_types:
+        canonical = str(m or "").strip()
+        if not canonical:
+            continue
+        norm = normalize_material_token(canonical)
+        canon_norm[norm] = canonical
+        alias[norm] = canonical
+        alias[_norm_text_nospace(canonical)] = canonical
 
     def add(a, canonical):
-        if not a or not canonical: return
-        alias[normalize_material_token(a)] = canonical
+        alias[_norm_text(a)]               = canonical
         alias[_norm_text_nospace(a)]       = canonical
 
     if "COPPER"         in canon_norm: add("COOPER", canon_norm["COPPER"]); add("CU", canon_norm["COPPER"])
@@ -417,7 +392,7 @@ def material_type_from_material(material: str, known_material_types: list) -> st
 # ============================
 
 DEFAULT_SETTINGS = {
-    "admin_password":             "FBT2026!",
+    "admin_password_hash":        "",
     "multiplier_mode":            "Company",
     "selected_project":           "",
     "material_types":             MATERIAL_TYPE_PRESET,
@@ -465,7 +440,36 @@ def build_full_default_table(material_types: list) -> dict:
     return out
 
 
+def ensure_admin_password_hash(settings: dict) -> dict:
+    password_hash = str(settings.get("admin_password_hash", "") or "").strip()
+    legacy_password = str(settings.get("admin_password", "") or "").strip()
+    if not password_hash:
+        seed_password = legacy_password or DEFAULT_ADMIN_PASSWORD
+        settings["admin_password_hash"] = generate_password_hash(seed_password)
+    settings.pop("admin_password", None)
+    return settings
+
+
+def password_matches(settings: dict, password: str) -> bool:
+    ensure_admin_password_hash(settings)
+    provided = str(password or "")
+    password_hash = str(settings.get("admin_password_hash", "") or "")
+    if not password_hash:
+        return False
+    try:
+        return check_password_hash(password_hash, provided)
+    except ValueError:
+        return False
+
+
+def set_admin_password(settings: dict, password: str) -> dict:
+    settings["admin_password_hash"] = generate_password_hash(str(password or ""))
+    settings.pop("admin_password", None)
+    return settings
+
+
 def ensure_company_defaults(settings: dict) -> dict:
+    settings = ensure_admin_password_hash(settings)
     mats = settings.get("material_types", [])
     if not isinstance(mats, list) or not mats:
         mats = MATERIAL_TYPE_PRESET
@@ -519,7 +523,9 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SETTINGS_FILE.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    sanitized = ensure_company_defaults(dict(settings))
+    sanitized.pop("admin_password", None)
+    SETTINGS_FILE.write_text(json.dumps(sanitized, indent=2), encoding="utf-8")
 
 # ============================
 # Multiplier lookup
@@ -618,334 +624,173 @@ def _split_length_and_trailing_material(token: str):
     raw = clean_token(token)
     m = LENGTH_RE.search(raw.replace("Ø","").replace("ø",""))
     if not m: return None, raw
-    return m.group(0).strip(), raw[m.end():].strip()
+    length = m.group(1)
+    after  = raw[m.end():].strip(" -–—\t")
+    return length, after
 
 
-def normalize_row(row: list, source_file: str, filename_batch, reject_log: list):
-    items = [clean_token(c) for c in row if c is not None]
-    items = [c for c in items if c and c.lower() != "none"]
-    if not items: return None
-    batch = _find_batch_in_row(items, filename_batch)
-    if not batch:
-        reject_log.append({"Reason":"Missing Batch","Row Preview":" | ".join(items[:12])})
-        return None
-    idx_len = None
-    length_token = None
-    trailing_material_from_len = ""
-    for i, tok in enumerate(items):
-        tok2 = tok.replace("ø","").replace("Ø","")
-        if LENGTH_RE.search(tok2):
-            idx_len = i
-            length_token, trailing_material_from_len = _split_length_and_trailing_material(tok2)
-            if not length_token:
-                length_token = tok2.strip()
-                trailing_material_from_len = ""
-            break
-    if idx_len is None or not length_token:
-        reject_log.append({"Reason":"Missing Length pattern","Row Preview":" | ".join(items[:12])})
-        return None
-    count = None
-    idx_count = None
-    for j in range(idx_len-1,-1,-1):
-        if re.fullmatch(r"\d+", items[j]):
-            count = int(items[j]); idx_count = j; break
-    if idx_count is None: idx_count = idx_len
-    after_len = items[idx_len+1:]
-    material_tokens = []
-    if trailing_material_from_len: material_tokens.append(trailing_material_from_len)
-    for tok in after_len:
-        if BATCH_IN_ROW_RE.fullmatch(tok.upper()): continue
-        material_tokens.append(tok)
-    material = " ".join([t for t in material_tokens if t]).strip()
-    if not material:
-        reject_log.append({"Reason":"Missing Material segment","Row Preview":" | ".join(items[:12])})
-        return None
-    left = items[:idx_count]
-    if len(left) < 3:
-        reject_log.append({"Reason":"Left side too short","Row Preview":" | ".join(items[:12])})
-        return None
-    size         = left[0].replace("ø","").replace("Ø","").replace('"',"").strip()
-    install_type = left[1].strip()
-    description  = " ".join(left[2:]).strip()
-    if not description:
-        reject_log.append({"Reason":"Missing Description","Row Preview":" | ".join(items[:12])})
-        return None
-    return {"Batch":batch,"Size":size,"Install Type":install_type,"Description":description,"Count":count,"Material":material,"Material Type":"","Source File":source_file}
+def normalize_row_tokens(tokens: list) -> list:
+    return [clean_token(t) for t in tokens if clean_token(t)]
 
-# ============================
-# PDF extraction
-# ============================
 
-def extract_from_pdf(pdf_path: Path, errors: list) -> pd.DataFrame:
-    records = []
-    pages = 0; pages_with_tables = []; total_tables = 0
-    total_table_rows_seen = 0; nonempty_cells_seen = 0
-    batch_token_hits = 0; length_token_hits = 0
-    filename_batch = _batch_from_filename(pdf_path.name)
-    reject_samples = []
-    try:
-        with pdfplumber.open(str(pdf_path)) as pdf:
-            pages = len(pdf.pages)
-            for p_idx, page in enumerate(pdf.pages):
-                try:
-                    tables = page.extract_tables()
-                except Exception as e:
-                    errors.append({"Stage":"PDF Extract","Source File":pdf_path.name,"Issue":f"Page {p_idx+1}: extract_tables() failed -> {type(e).__name__}: {e}"})
-                    continue
-                if tables: pages_with_tables.append(p_idx+1)
-                total_tables += len(tables or [])
-                for table in (tables or []):
-                    total_table_rows_seen += len(table or [])
-                    for row in (table or []):
-                        flat = []
-                        for c in (row or []):
-                            if c is None: continue
-                            s = clean_token(c)
-                            if s: nonempty_cells_seen += 1; flat.append(s)
-                        joined = " ".join(flat).upper()
-                        if BATCH_IN_ROW_RE.search(joined) or FALLBACK_BATCH_TOKEN_RE.search(joined): batch_token_hits += 1
-                        if LENGTH_RE.search(joined.replace("Ø","").replace("ø","")): length_token_hits += 1
-                        if len(reject_samples) < 25:
-                            rec = normalize_row(row, pdf_path.name, filename_batch, reject_samples)
-                        else:
-                            rec = normalize_row(row, pdf_path.name, filename_batch, [])
-                        if rec: records.append(rec)
-    except Exception as e:
-        errors.append({"Stage":"PDF Open","Source File":pdf_path.name,"Issue":f"pdfplumber.open() failed -> {type(e).__name__}: {e}"})
-        return pd.DataFrame()
-    if not records:
-        if total_tables == 0:
-            errors.append({"Stage":"PDF Extract","Source File":pdf_path.name,"Issue":f"No tables detected. Pages={pages}. (Likely scanned/image PDF.)"})
+def _extract_length_from_tokens(tokens: list):
+    for i, tok in enumerate(tokens):
+        m = LENGTH_RE.search(tok.replace("Ø","").replace("ø",""))
+        if m:
+            return i, m.group(1)
+    return None, None
+
+
+def _extract_description_material_size(tokens: list):
+    idx, length = _extract_length_from_tokens(tokens)
+    if idx is None:
+        desc = " ".join(tokens[:-2]).strip() if len(tokens) >= 2 else " ".join(tokens).strip()
+        size = tokens[-2] if len(tokens) >= 2 else ""
+        material = tokens[-1] if len(tokens) >= 1 else ""
+        return desc, size, material, ""
+
+    before = tokens[:idx]
+    after  = tokens[idx + 1:]
+    trailing_material = ""
+    if after:
+        trailing_material = after[-1]
+        after = after[:-1]
+
+    material = trailing_material
+    if before:
+        if len(before) >= 2:
+            desc = " ".join(before[:-1]).strip()
+            size = before[-1]
         else:
-            reason_counts = {}
-            for r in reject_samples: reason_counts[r["Reason"]] = reason_counts.get(r["Reason"],0)+1
-            reason_summary = ", ".join([f"{k}={v}" for k,v in sorted(reason_counts.items(),key=lambda x:-x[1])])
-            errors.append({"Stage":"PDF Extract","Source File":pdf_path.name,"Issue":f"Tables detected but 0 rows matched. Pages={pages}, tables={total_tables}, rows_seen={total_table_rows_seen}. Top rejections: {reason_summary or 'None'}."})
-            for r in reject_samples[:10]:
-                errors.append({"Stage":"Row Rejected","Source File":pdf_path.name,"Issue":f"{r['Reason']} | Preview: {r['Row Preview']}"})
-    return pd.DataFrame(records).drop_duplicates() if records else pd.DataFrame()
+            desc = before[0]
+            size = ""
+    else:
+        desc = ""
+        size = ""
 
-# ============================
-# Excel formatting
-# ============================
-
-def format_excel(path: Path) -> None:
-    wb = load_workbook(path)
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        if ws.max_row < 1 or ws.max_column < 1: continue
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
-        for col in range(1, ws.max_column+1):
-            max_len = 0
-            for row in range(1, min(ws.max_row,400)+1):
-                v = ws.cell(row=row,column=col).value
-                if v is not None: max_len = max(max_len, len(str(v)))
-            ws.column_dimensions[get_column_letter(col)].width = min(max(10,max_len+2),80)
-        header_map = {ws.cell(1,c).value: c for c in range(1,ws.max_column+1)}
-        def fmt_col(col_name, num_fmt):
-            if col_name in header_map:
-                c = header_map[col_name]
-                for r in range(2, ws.max_row+1):
-                    ws.cell(r,c).number_format = num_fmt
-        fmt_col("Count","0"); fmt_col("Diameter (in)","0.00"); fmt_col("Side Multiplier","0.00"); fmt_col("Total Inches","0.00")
-        if ws.max_row >= 2:
-            ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
-            table_name = f"Tbl_{re.sub(r'[^A-Za-z0-9]','',sheet_name)[:20] or 'Sheet'}"
-            existing = {t.displayName for t in ws._tables}
-            if table_name in existing: table_name += "_1"
-            tab = Table(displayName=table_name, ref=ref)
-            tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9",showRowStripes=True,showColumnStripes=False)
-            ws.add_table(tab)
-    wb.save(path)
+    return desc, size, material, length
 
 
-def format_error_summary(errors: list, max_files: int=10, max_lines_per_file: int=10) -> str:
-    if not errors: return "No errors."
-    by_file = {}
-    for e in errors:
-        f = str(e.get("Source File") or "(unknown)")
-        by_file.setdefault(f, []).append(e)
-    def sev(items):
-        s = 0
-        for it in items:
-            st = str(it.get("Stage","")).lower()
-            if "pdf open" in st: s += 100
-            elif "pdf extract" in st: s += 50
-            elif "row rejected" in st: s += 25
-            else: s += 1
-        return s
-    sorted_files = sorted(by_file.items(), key=lambda kv:(sev(kv[1]),len(kv[1])), reverse=True)
-    lines = ["ERROR DETAILS","------"]
-    for i,(fname,items) in enumerate(sorted_files):
-        if i >= max_files: lines.append(f"... plus {len(sorted_files)-max_files} more file(s)."); break
-        lines.append(f"\nFile: {fname}  (issues: {len(items)})")
-        seen = set(); printed = 0
-        for it in items:
-            key = (str(it.get("Stage","")), str(it.get("Issue","")))
-            if key in seen: continue
-            seen.add(key)
-            lines.append(f"  - [{key[0]}] {key[1]}")
-            printed += 1
-            if printed >= max_lines_per_file:
-                if len(seen) < len(items): lines.append("  ... more issues (see Errors sheet).")
-                break
-    return "\n".join(lines)
+def row_to_record(tokens: list, filename: str, settings: dict, legend_maps) -> dict:
+    concat_map, concat_map_ns, desc_map, desc_map_ns, manufacturers = legend_maps
+    items = normalize_row_tokens(tokens)
+    if not items:
+        raise ValueError("Empty row")
 
-# ============================
-# Main run function
-# ============================
+    desc, size, material, length = _extract_description_material_size(items)
+    batch = _find_batch_in_row(items, _batch_from_filename(filename))
+    material_type = material_type_from_material(material, settings.get("material_types", []))
+    fitting_type = classify_fitting(desc, manufacturers, concat_map, concat_map_ns, desc_map, desc_map_ns)
 
-def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, project: str) -> dict:
-    """
-    Run the full BOM pipeline.
-    Returns a result dict with summary text, stats, and output file path.
-    """
-    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    inches = 0.0
+    warnings = []
     errors = []
-    dfs    = []
 
-    for pdf_path in pdf_paths:
-        p = Path(pdf_path)
-        df = extract_from_pdf(p, errors)
-        if not df.empty:
-            dfs.append(df)
+    try:
+        inches = round(size_to_diameter_in(size) * get_effective_multiplier(settings, settings.get("selected_project", ""), material_type, fitting_type), 2)
+    except Exception as exc:
+        errors.append(str(exc))
 
-    out_filename = (export_filename or "BOM_Export").strip()
-    if not out_filename.endswith(".xlsx"):
-        out_filename += ".xlsx"
-    out_path = EXPORTS_DIR / out_filename
-
-    if not dfs:
-        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-            pd.DataFrame(columns=[]).to_excel(writer, sheet_name="Master", index=False)
-            pd.DataFrame(errors).to_excel(writer, sheet_name="Errors", index=False)
-        format_excel(out_path)
-        return {"ok":True,"total_inches":0,"rows":0,"ok_rows":0,"warn_rows":0,"err_rows":0,"errors":len(errors),"output":str(out_path),"summary":f"No rows extracted.\n\n{format_error_summary(errors)}"}
-
-    df = pd.concat(dfs, ignore_index=True).drop_duplicates()
-    df.insert(0, "Row ID", range(1, len(df)+1))
-    df["Row Status"]  = "OK"
-    df["Row Issues"]  = ""
-
-    # Classify fitting types
-    df["Fitting Type"] = df["Description"].apply(classify_fitting_type_with_legend)
-
-    # Apply exclusions
-    ex_map = settings.get("exclude_fitting_types", {})
-    df = df[~df["Fitting Type"].map(lambda x: bool(ex_map.get(x, False)))].copy()
-    df["Row ID"] = range(1, len(df)+1)
-
-    # Resolve material type
-    df["Material Type"] = df["Material"].apply(
-        lambda m: material_type_from_material(m, settings.get("material_types", MATERIAL_TYPE_PRESET))
-    )
-
-    # Parse diameters
-    diam = []
-    for i, r in df.iterrows():
-        try:
-            d = size_to_diameter_in(r.get("Size",""))
-            diam.append(round(float(d),4))
-        except Exception as e:
-            diam.append(None)
-            msg = f"Size parse failed -> {type(e).__name__}: {e}"
-            df.at[i,"Row Status"] = "Error"
-            df.at[i,"Row Issues"] = (df.at[i,"Row Issues"] + (" | " if df.at[i,"Row Issues"] else "") + msg)
-            errors.append({"Stage":"Row Parse","Source File":r.get("Source File",""),"Row ID":int(df.at[i,"Row ID"]),"Issue":msg})
-    df["Diameter (in)"] = diam
-
-    # Side multiplier
-    df["Side Multiplier"] = df.apply(
-        lambda rr: get_effective_multiplier(settings, project, str(rr.get("Material Type","UNKNOWN")), str(rr.get("Fitting Type","Unclassified"))),
-        axis=1
-    )
-
-    # Total inches
-    total_inches = []
-    for i, r in df.iterrows():
-        cnt = r.get("Count",None)
-        d   = r.get("Diameter (in)",None)
-        if cnt is None or (isinstance(cnt,float) and pd.isna(cnt)):
-            total_inches.append(None)
-            msg = "Missing Count -> Total Inches not calculated"
-            if df.at[i,"Row Status"] != "Error": df.at[i,"Row Status"] = "Warning"
-            df.at[i,"Row Issues"] = (df.at[i,"Row Issues"] + (" | " if df.at[i,"Row Issues"] else "") + msg)
-            errors.append({"Stage":"Row Calc","Source File":r.get("Source File",""),"Row ID":int(df.at[i,"Row ID"]),"Issue":msg})
-            continue
-        if d is None or (isinstance(d,float) and pd.isna(d)):
-            total_inches.append(None)
-            msg = "Missing/Invalid Diameter -> Total Inches not calculated"
-            df.at[i,"Row Status"] = "Error"
-            df.at[i,"Row Issues"] = (df.at[i,"Row Issues"] + (" | " if df.at[i,"Row Issues"] else "") + msg)
-            errors.append({"Stage":"Row Calc","Source File":r.get("Source File",""),"Row ID":int(df.at[i,"Row ID"]),"Issue":msg})
-            continue
-        try:
-            ti = float(d) * float(cnt) * float(r.get("Side Multiplier", FALLBACK_MULTIPLIER))
-            total_inches.append(round(ti,2))
-        except Exception as e:
-            total_inches.append(None)
-            msg = f"Total Inches calc failed -> {type(e).__name__}: {e}"
-            df.at[i,"Row Status"] = "Error"
-            df.at[i,"Row Issues"] = (df.at[i,"Row Issues"] + (" | " if df.at[i,"Row Issues"] else "") + msg)
-            errors.append({"Stage":"Row Calc","Source File":r.get("Source File",""),"Row ID":int(df.at[i,"Row ID"]),"Issue":msg})
-    df["Total Inches"] = total_inches
-
-    df = df.sort_values(["Batch","Material Type","Fitting Type","Size","Install Type","Description"]).reset_index(drop=True)
-
-    numeric_ti   = pd.to_numeric(df["Total Inches"], errors="coerce").fillna(0)
-    total_val    = float(numeric_ti.sum())
-    inches_by_mat = df.assign(_ti=numeric_ti).groupby("Material Type")["_ti"].sum().sort_values(ascending=False)
-
-    total_row = {c:"" for c in df.columns}
-    total_row["Batch"] = "TOTAL"
-    total_row["Total Inches"] = round(total_val, 2)
-    df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
-
-    errors_df = pd.DataFrame(errors)
-    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Master", index=False)
-        if not errors_df.empty:
-            errors_df.to_excel(writer, sheet_name="Errors", index=False)
-    format_excel(out_path)
-
-    ok_rows   = int((df["Row Status"]=="OK").sum())   if "Row Status" in df.columns else 0
-    warn_rows = int((df["Row Status"]=="Warning").sum()) if "Row Status" in df.columns else 0
-    err_rows  = int((df["Row Status"]=="Error").sum())   if "Row Status" in df.columns else 0
-
-    summary_lines = [
-        f"{APP_NAME} - SUMMARY",
-        f"Version: {APP_VERSION}",
-        f"Multiplier Mode: {'One-Off (Project Override)' if mode=='Project' else 'Company Wide (Default)'}",
-        f"Project Override: {project if mode=='Project' else '(none)'}",
-        "------",
-        f"PDFs processed: {len(pdf_paths)}",
-        f"Rows exported (incl. issues): {len(df)-1}",
-        f"Row Status: OK={ok_rows}  Warning={warn_rows}  Error={err_rows}",
-        f"Errors logged: {len(errors)}",
-        "",
-        f"TOTAL INCHES: {total_val:,.2f}",
-        "",
-        "TOTAL INCHES BY MATERIAL TYPE:",
-    ]
-    for mat, val in inches_by_mat.items():
-        summary_lines.append(f"  - {mat}: {val:,.2f}")
-    if errors:
-        summary_lines += ["", format_error_summary(errors)]
-    summary_lines += ["","Output file:", str(out_path)]
+    if not batch:
+        warnings.append("Missing batch")
+    if fitting_type == "Unclassified":
+        warnings.append("Unclassified fitting")
 
     return {
-        "ok":          True,
-        "total_inches": round(total_val, 2),
-        "rows":         len(df)-1,
-        "ok_rows":      ok_rows,
-        "warn_rows":    warn_rows,
-        "err_rows":     err_rows,
-        "errors":       len(errors),
-        "output":       str(out_path),
-        "output_filename": out_filename,
-        "summary":      "\n".join(summary_lines),
+        "batch": batch or "",
+        "description": desc,
+        "size": size,
+        "material": material,
+        "material_type": material_type,
+        "fitting_type": fitting_type,
+        "length": length,
+        "inches": inches,
+        "warnings": "; ".join(warnings),
+        "errors": "; ".join(errors),
+    }
+
+
+def records_from_pdf(pdf_path: str, settings: dict, legend_maps) -> list:
+    rows = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            tables = page.extract_tables() or []
+            for tbl in tables:
+                if not tbl:
+                    continue
+                for row in tbl[1:]:
+                    if not row:
+                        continue
+                    try:
+                        rows.append(row_to_record(list(row), Path(pdf_path).name, settings, legend_maps))
+                    except Exception:
+                        continue
+    return rows
+
+
+def summarize_records(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "No rows found."
+    lines = [
+        f"Rows: {len(df)}",
+        f"Total inches: {df['inches'].fillna(0).sum():,.2f}",
+        f"Warnings: {(df['warnings'].fillna('') != '').sum()}",
+        f"Errors: {(df['errors'].fillna('') != '').sum()}",
+    ]
+    return "\n".join(lines)
+
+
+def export_records(df: pd.DataFrame, export_path: Path) -> None:
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_excel(export_path, index=False)
+    wb = load_workbook(export_path)
+    ws = wb.active
+    ws.freeze_panes = "A2"
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+    for idx, column_cells in enumerate(ws.columns, start=1):
+        max_len = max(len(str(c.value or "")) for c in column_cells)
+        ws.column_dimensions[get_column_letter(idx)].width = min(max(max_len + 2, 12), 40)
+    table_ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
+    tbl = Table(displayName="BOMExport", ref=table_ref)
+    tbl.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+    ws.add_table(tbl)
+    wb.save(export_path)
+
+
+def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, project: str) -> dict:
+    settings = ensure_company_defaults(dict(settings))
+    settings["multiplier_mode"] = mode if mode in ("Company", "Project") else "Company"
+    settings["selected_project"] = project if settings["multiplier_mode"] == "Project" else ""
+
+    legend_maps = load_legend_maps()
+    records = []
+    for pdf_path in pdf_paths:
+        records.extend(records_from_pdf(pdf_path, settings, legend_maps))
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        excluded = settings.get("exclude_fitting_types", {})
+        df = df[~df["fitting_type"].map(lambda ft: bool(excluded.get(ft, False)))]
+        df = df.reset_index(drop=True)
+
+    export_base = str(export_filename or "BOM_Export").strip() or "BOM_Export"
+    export_path = EXPORTS_DIR / f"{export_base}.xlsx"
+    export_records(df, export_path)
+
+    summary = summarize_records(df)
+    warn_rows = int((df["warnings"].fillna("") != "").sum()) if not df.empty else 0
+    err_rows = int((df["errors"].fillna("") != "").sum()) if not df.empty else 0
+
+    return {
+        "ok": True,
+        "rows": int(len(df)),
+        "ok_rows": int(len(df) - warn_rows - err_rows),
+        "warn_rows": warn_rows,
+        "err_rows": err_rows,
+        "total_inches": round(float(df["inches"].fillna(0).sum()), 2) if not df.empty else 0.0,
+        "summary": summary,
+        "output": str(export_path),
+        "output_filename": export_path.name,
     }

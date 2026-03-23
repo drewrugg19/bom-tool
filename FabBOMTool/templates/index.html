@@ -237,7 +237,7 @@
                 <div class="admin-card-desc">Update the password required to access this panel.</div>
                 <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
                   <input class="form-inp" type="password" id="cur-pw"  placeholder="Current password" />
-                  <input class="form-inp" type="password" id="new-pw"  placeholder="New password" />
+                  <input class="form-inp" type="password" id="new-pw"  placeholder="New password (12+ chars)" />
                   <input class="form-inp" type="password" id="new-pw2" placeholder="Confirm new password" />
                   <button class="btn btn-primary" onclick="changePassword()">Update password</button>
                   <div class="lock-err" id="pw-err"></div>
@@ -273,7 +273,7 @@
             <div class="admin-grid">
               <div class="admin-card">
                 <div class="admin-card-title">About the legend</div>
-                <div class="admin-card-desc">The legend file (legend_embedded.py or Legend.cache.json) drives fitting classification. Place it next to app.py and restart the server to update it.</div>
+                <div class="admin-card-desc">The legend file (legend_embedded.py or Legend.cache.json) drives fitting classification. Uploading a new Legend.cache.json applies immediately for new runs.</div>
                 <div id="legend-status" style="margin-top:10px;font-size:12px;color:var(--text-3)">Checking…</div>
               </div>
               <div class="admin-card">
