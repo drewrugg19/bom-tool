@@ -487,6 +487,11 @@ def material_type_from_material(material: str, known_material_types: list) -> st
 # Settings / Defaults
 # ============================
 
+
+
+def sort_case_insensitive(values: list[str]) -> list[str]:
+    return sorted(values, key=lambda value: (str(value).casefold(), str(value)))
+
 DEFAULT_SETTINGS = {
     "admin_password_hash":        "",
     "multiplier_mode":            "Company",
@@ -570,6 +575,7 @@ def ensure_company_defaults(settings: dict) -> dict:
     if not isinstance(mats, list) or not mats:
         mats = MATERIAL_TYPE_PRESET
     mats = dedupe_case_insensitive_keep_first([str(x).strip() for x in mats if str(x).strip()])
+    mats = sort_case_insensitive(mats)
     settings["material_types"] = mats
 
     existing = _clean_multiplier_table(settings.get("company_side_multipliers", {}))
@@ -602,7 +608,7 @@ def load_settings() -> dict:
             mats = s.get("material_types", [])
             if not isinstance(mats, list) or not mats:
                 mats = MATERIAL_TYPE_PRESET
-            s["material_types"] = dedupe_case_insensitive_keep_first([str(x).strip() for x in mats if str(x).strip()])
+            s["material_types"] = sort_case_insensitive(dedupe_case_insensitive_keep_first([str(x).strip() for x in mats if str(x).strip()]))
             s["company_side_multipliers"] = _clean_multiplier_table(s.get("company_side_multipliers", {}))
             psm = s.get("project_side_multipliers", {})
             s["project_side_multipliers"] = {str(k).strip(): _clean_multiplier_table(v) for k, v in psm.items() if str(k).strip()}

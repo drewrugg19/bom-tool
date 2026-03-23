@@ -6,6 +6,9 @@ let settings = {};
 let adminUnlocked = false;
 let currentMat = "";
 let currentProjMat = "";
+let adminIdleTimer = null;
+
+const ADMIN_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 
 const TABS = {
   run:      { title: "Run",      sub: "Upload PDFs and process a batch" },
@@ -25,6 +28,7 @@ function switchTab(name) {
   if (name === "history") loadHistory();
   if (name === "settings") loadSettingsUI();
   if (name === "admin") checkLegendStatus();
+  syncProtectedPanels();
 }
 
 document.querySelectorAll(".nav-item[data-tab]").forEach(el => {
@@ -217,12 +221,15 @@ async function deleteRun(id, btn) {
   }
 }
 
+
 async function loadSettingsUI() {
   settings = await fetchJson("/api/settings");
+  sortMaterialTypesInState();
   renderMaterialSel();
   renderMaterials();
   renderExclusions();
   renderProjectSel();
+  syncProtectedPanels();
 }
 
 document.querySelectorAll(".snav").forEach(item => {
@@ -237,7 +244,7 @@ document.querySelectorAll(".snav").forEach(item => {
 function renderMaterialSel() {
   const sel = document.getElementById("mult-mat-sel");
   sel.innerHTML = "";
-  const mats = settings.material_types || [];
+  const mats = sortedMaterialTypes();
   mats.forEach(m => {
     const opt = document.createElement("option");
     opt.value = m;
@@ -284,16 +291,18 @@ async function saveMultipliers() {
 function renderMaterials() {
   const list = document.getElementById("chip-list");
   list.innerHTML = "";
-  (settings.material_types || []).forEach(m => {
+  sortedMaterialTypes().forEach(m => {
     const chip = document.createElement("div");
     chip.className = "chip";
     chip.innerHTML = `${escHtml(m)}<span class="chip-x" data-mat="${escHtml(m)}">×</span>`;
     list.appendChild(chip);
   });
   list.querySelectorAll(".chip-x").forEach(b => b.addEventListener("click", () => {
-    settings.material_types = settings.material_types.filter(x => x !== b.dataset.mat);
+    settings.material_types = (settings.material_types || []).filter(x => x !== b.dataset.mat);
+    sortMaterialTypesInState();
     renderMaterials();
     renderMaterialSel();
+    renderProjMatSel(document.getElementById("proj-sel").value);
   }));
 }
 
@@ -304,8 +313,10 @@ function addMaterial() {
   if (!settings.material_types) settings.material_types = [];
   if (!settings.material_types.find(m => m.toLowerCase() === val.toLowerCase())) {
     settings.material_types.push(val);
+    sortMaterialTypesInState();
     renderMaterials();
     renderMaterialSel();
+    renderProjMatSel(document.getElementById("proj-sel").value);
   }
   inp.value = "";
 }
@@ -362,7 +373,7 @@ function renderProjMatSel(proj) {
   }
   const sel = document.getElementById("proj-mat-sel");
   sel.innerHTML = "";
-  const mats = settings.material_types || [];
+  const mats = sortedMaterialTypes();
   mats.forEach(m => {
     const opt = document.createElement("option");
     opt.value = m;
@@ -426,25 +437,44 @@ async function saveProjectMultipliers() {
   showToast("Project multipliers saved");
 }
 
-async function unlockAdmin() {
-  const pw = document.getElementById("admin-pw").value;
-  const err = document.getElementById("lock-err");
-  err.textContent = "";
+
+async function unlockProtectedArea() {
+  const adminInput = document.getElementById("admin-pw");
+  const settingsInput = document.getElementById("settings-pw");
+  const activeInput = document.activeElement === settingsInput ? settingsInput : adminInput;
+  const password = (activeInput?.value || adminInput.value || settingsInput.value || "").trim();
+  const adminErr = document.getElementById("lock-err");
+  const settingsErr = document.getElementById("settings-lock-err");
+  adminErr.textContent = "";
+  settingsErr.textContent = "";
+  if (!password) {
+    const message = "Enter your admin password.";
+    adminErr.textContent = message;
+    settingsErr.textContent = message;
+    return;
+  }
   try {
     await fetchJson("/api/admin/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: pw }),
+      body: JSON.stringify({ password }),
     });
-    document.getElementById("admin-lock").style.display = "none";
-    document.getElementById("admin-status").innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.5"><rect x="3" y="7" width="10" height="8" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg> Admin unlocked';
     adminUnlocked = true;
+    adminInput.value = "";
+    settingsInput.value = "";
+    syncProtectedPanels();
+    updateAdminStatus();
+    resetAdminIdleTimer();
   } catch (e) {
-    err.textContent = e.message;
+    adminErr.textContent = e.message;
+    settingsErr.textContent = e.message;
   }
 }
 document.getElementById("admin-pw").addEventListener("keydown", e => {
-  if (e.key === "Enter") unlockAdmin();
+  if (e.key === "Enter") unlockProtectedArea();
+});
+document.getElementById("settings-pw").addEventListener("keydown", e => {
+  if (e.key === "Enter") unlockProtectedArea();
 });
 
 async function changePassword() {
@@ -468,6 +498,7 @@ async function changePassword() {
       body: JSON.stringify({ current: cur, new_password: np1 }),
     });
     showToast("Password updated");
+    resetAdminIdleTimer();
     document.getElementById("cur-pw").value = "";
     document.getElementById("new-pw").value = "";
     document.getElementById("new-pw2").value = "";
@@ -487,6 +518,7 @@ async function resetSettings() {
       body: JSON.stringify({ password: pw }),
     });
     showToast("Settings reset to defaults");
+    resetAdminIdleTimer();
     loadSettingsUI();
   } catch (e) {
     alert(e.message);
@@ -494,6 +526,7 @@ async function resetSettings() {
 }
 
 async function exportSettings() {
+  resetAdminIdleTimer();
   const data = await fetchJson("/api/settings");
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -516,6 +549,7 @@ async function importSettings(input) {
     const data = JSON.parse(text);
     await postSettings(data);
     showToast("Settings imported");
+    resetAdminIdleTimer();
     loadSettingsUI();
   } catch (e) {
     alert("Invalid JSON file: " + e.message);
@@ -554,6 +588,7 @@ async function uploadLegend(input) {
       body: JSON.stringify(payload),
     });
     showToast("Legend cache uploaded");
+    resetAdminIdleTimer();
     checkLegendStatus();
   } catch (e) {
     err.textContent = e.message;
@@ -584,12 +619,64 @@ async function fetchJson(url, options = {}) {
   return data;
 }
 
+
+function sortedMaterialTypes() {
+  return [...(settings.material_types || [])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+function sortMaterialTypesInState() {
+  settings.material_types = sortedMaterialTypes();
+}
+
+function updateAdminStatus() {
+  const status = document.getElementById("admin-status");
+  if (adminUnlocked) {
+    status.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="var(--green)" stroke-width="1.5"><rect x="3" y="7" width="10" height="8" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg> Admin unlocked';
+  } else {
+    status.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="8" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 015 0v2"/></svg> Admin locked';
+  }
+}
+
+function syncProtectedPanels() {
+  const adminLock = document.getElementById("admin-lock");
+  const settingsLock = document.getElementById("settings-lock");
+  adminLock.style.display = adminUnlocked ? "none" : "flex";
+  settingsLock.style.display = adminUnlocked ? "none" : "flex";
+  updateAdminStatus();
+}
+
+function lockAdminAccess(showToastMessage = false) {
+  adminUnlocked = false;
+  clearTimeout(adminIdleTimer);
+  adminIdleTimer = null;
+  document.getElementById("admin-pw").value = "";
+  document.getElementById("settings-pw").value = "";
+  document.getElementById("lock-err").textContent = "";
+  document.getElementById("settings-lock-err").textContent = "";
+  syncProtectedPanels();
+  if (showToastMessage) {
+    showToast("Admin access locked");
+  }
+}
+
+function resetAdminIdleTimer() {
+  if (!adminUnlocked) return;
+  clearTimeout(adminIdleTimer);
+  adminIdleTimer = window.setTimeout(() => lockAdminAccess(true), ADMIN_IDLE_TIMEOUT_MS);
+}
+
+["click", "keydown", "mousemove", "mousedown", "touchstart", "scroll"].forEach(eventName => {
+  document.addEventListener(eventName, () => {
+    if (adminUnlocked) resetAdminIdleTimer();
+  }, { passive: true });
+});
+
 function showToast(msg) {
   let t = document.getElementById("toast");
   if (!t) {
     t = document.createElement("div");
     t.id = "toast";
-    t.style.cssText = "position:fixed;bottom:24px;right:24px;background:#1a1a18;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999;opacity:0;transition:opacity .2s;pointer-events:none";
+    t.style.cssText = "position:fixed;bottom:24px;right:24px;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999;opacity:0;transition:opacity .2s;pointer-events:none";
     document.body.appendChild(t);
   }
   t.textContent = msg;
@@ -608,7 +695,10 @@ function escHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+
 (async function init() {
   settings = await fetchJson("/api/settings");
+  sortMaterialTypesInState();
+  syncProtectedPanels();
   updateRunButtonState();
 })();

@@ -80,6 +80,7 @@ class AppTestCase(unittest.TestCase):
         self.assertNotIn("admin_password", migrated)
         self.assertTrue(logic_mod.password_matches(migrated, "FBT2026!"))
 
+
     def test_change_password_requires_strong_password(self):
         response = self.client.post(
             "/api/admin/change-password",
@@ -87,6 +88,15 @@ class AppTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("at least 12 characters", response.get_json()["error"])
+
+    def test_save_settings_sorts_material_types_alphabetically(self):
+        response = self.client.post(
+            "/api/settings",
+            json={"material_types": ["PVC", "copper", "Black Iron"]},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = self.client.get("/api/settings").get_json()
+        self.assertEqual(payload["material_types"], ["Black Iron", "copper", "PVC"])
 
     def test_upload_legend_validates_required_keys(self):
         response = self.client.post("/api/admin/upload-legend", json={"concat": {}})
@@ -117,7 +127,6 @@ class AppTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("Project name is required", response.get_json()["error"])
-
 
 class LogicParserRegressionTestCase(unittest.TestCase):
     def test_normalize_row_matches_legacy_shape(self):

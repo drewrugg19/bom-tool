@@ -26,6 +26,7 @@ from .core.logic import (
     dedupe_case_insensitive_keep_first,
     ensure_company_defaults,
     load_settings,
+    sort_case_insensitive,
     password_matches,
     run_bom,
     save_settings,
@@ -121,7 +122,7 @@ def create_app() -> Flask:
         if "material_types" in data:
             mats = [str(m).strip() for m in data["material_types"] if str(m).strip()]
             if mats:
-                s["material_types"] = dedupe_case_insensitive_keep_first(mats)
+                s["material_types"] = sort_case_insensitive(dedupe_case_insensitive_keep_first(mats))
 
         if "company_side_multipliers" in data:
             cleaned = _clean_multiplier_table(data["company_side_multipliers"])
