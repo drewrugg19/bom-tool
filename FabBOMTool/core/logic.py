@@ -344,7 +344,7 @@ def classify_fitting_type(description: str) -> str:
         return "Pipe"
     if "COUPLING" in u:
         return "Coupling"
-    if "TEE" in u:
+    if re.search(r"\bTEE\b", u):
         return "Tee"
     if "WYE" in u:
         return "Wye"

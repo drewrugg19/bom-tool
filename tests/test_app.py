@@ -168,6 +168,14 @@ class LogicParserRegressionTestCase(unittest.TestCase):
             "Tee",
         )
 
+    def test_classify_fitting_type_with_legend_does_not_treat_sixteenth_bend_as_tee(self):
+        legend_maps = ({}, {}, {}, {}, set())
+
+        self.assertEqual(
+            logic_mod.classify_fitting_type_with_legend("3 in Sixteenth Bend", legend_maps),
+            "Elbow",
+        )
+
     def test_classify_fitting_type_with_legend_maps_specific_ferrule_to_cap(self):
         legend_maps = ({}, {}, {}, {}, set())
 
