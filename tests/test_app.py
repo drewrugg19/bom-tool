@@ -119,5 +119,49 @@ class AppTestCase(unittest.TestCase):
         self.assertIn("Project name is required", response.get_json()["error"])
 
 
+class LogicParserRegressionTestCase(unittest.TestCase):
+    def test_normalize_row_matches_legacy_shape(self):
+        reject_log = []
+        row = ["2", "GROOVED", "FIG 777 COUPLING", "4", '10" PVC', "B12345"]
+
+        normalized = logic_mod.normalize_row(row, "demo.pdf", "B12345", reject_log)
+
+        self.assertEqual(normalized["Batch"], "B12345")
+        self.assertEqual(normalized["Size"], "2")
+        self.assertEqual(normalized["Install Type"], "GROOVED")
+        self.assertEqual(normalized["Description"], "FIG 777 COUPLING")
+        self.assertEqual(normalized["Count"], 4)
+        self.assertEqual(normalized["Length"], '10"')
+        self.assertEqual(normalized["Material"], "PVC")
+        self.assertEqual(reject_log, [])
+
+    def test_normalize_row_rejects_metadata_rows_without_length(self):
+        reject_log = []
+        row = ["FABRICATION ISOMETRIC", "B12345", "REV 2"]
+
+        normalized = logic_mod.normalize_row(row, "demo.pdf", "B12345", reject_log)
+
+        self.assertIsNone(normalized)
+        self.assertEqual(reject_log[0]["Reason"], "Missing Length pattern")
+
+    def test_classify_fitting_type_with_legend_falls_back_to_keyword_logic(self):
+        legend_maps = ({}, {}, {}, {}, set())
+
+        self.assertEqual(
+            logic_mod.classify_fitting_type_with_legend("Victaulic 90 Ell", legend_maps),
+            "Elbow",
+        )
+
+    def test_material_type_from_material_uses_legacy_aliases(self):
+        materials = ["Copper", "PVC", "Nickel iron"]
+
+        self.assertEqual(logic_mod.material_type_from_material("CU TUBE", materials), "Copper")
+        self.assertEqual(logic_mod.material_type_from_material("nickeliron body", materials), "Nickel iron")
+
+    def test_size_to_diameter_in_uses_largest_dimension(self):
+        self.assertEqual(logic_mod.size_to_diameter_in('2 x 1-1/2'), 2.0)
+
+
+
 if __name__ == "__main__":
     unittest.main()
