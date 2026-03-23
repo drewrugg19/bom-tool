@@ -36,6 +36,7 @@ It reports application status, version, and whether a cached legend file is pres
 ## Security notes
 
 - Admin passwords are stored as hashes in `data/settings.json`.
+- The app keeps a mirrored `data/settings.backup.json` copy so updates or a damaged primary settings file do not wipe your saved configuration.
 - The default admin password is still `FBT2026!` on first launch, so change it immediately in the Admin panel.
 - Uploaded PDFs are written to a temporary uploads folder with unique filenames and removed after processing.
 - Generated exports, cached data, and local databases are intentionally excluded from version control.

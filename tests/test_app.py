@@ -30,6 +30,7 @@ class AppTestCase(unittest.TestCase):
         self.patchers = [
             mock.patch.object(logic_mod, "DATA_DIR", self.data_dir),
             mock.patch.object(logic_mod, "SETTINGS_FILE", self.data_dir / "settings.json"),
+            mock.patch.object(logic_mod, "SETTINGS_BACKUP_FILE", self.data_dir / "settings.backup.json"),
             mock.patch.object(logic_mod, "LEGEND_CACHE_PATH", self.data_dir / "Legend.cache.json"),
             mock.patch.object(logic_mod, "EXPORTS_DIR", self.exports_dir),
             mock.patch.object(history_mod, "DB_PATH", self.data_dir / "history.db"),
@@ -98,6 +99,17 @@ class AppTestCase(unittest.TestCase):
         payload = self.client.get("/api/settings").get_json()
         self.assertEqual(payload["material_types"], ["Black Iron", "copper", "PVC"])
 
+    def test_save_settings_writes_backup_copy(self):
+        response = self.client.post(
+            "/api/settings",
+            json={"material_types": ["PVC", "Copper"]},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        primary = json.loads((self.data_dir / "settings.json").read_text(encoding="utf-8"))
+        backup = json.loads((self.data_dir / "settings.backup.json").read_text(encoding="utf-8"))
+        self.assertEqual(primary, backup)
+
     def test_upload_legend_validates_required_keys(self):
         response = self.client.post("/api/admin/upload-legend", json={"concat": {}})
         self.assertEqual(response.status_code, 400)
@@ -127,6 +139,23 @@ class AppTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("Project name is required", response.get_json()["error"])
+
+    def test_load_settings_recovers_from_backup_when_primary_is_invalid(self):
+        settings = logic_mod.load_settings()
+        settings["material_types"] = ["PVC", "Copper"]
+        settings["exclude_fitting_types"]["Valve"] = True
+        logic_mod.save_settings(settings)
+
+        (self.data_dir / "settings.json").write_text("{invalid json", encoding="utf-8")
+
+        recovered = logic_mod.load_settings()
+
+        self.assertEqual(recovered["material_types"], ["Copper", "PVC"])
+        self.assertTrue(recovered["exclude_fitting_types"]["Valve"])
+
+        restored_primary = json.loads((self.data_dir / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(restored_primary["material_types"], ["Copper", "PVC"])
+        self.assertTrue(restored_primary["exclude_fitting_types"]["Valve"])
 
 class LogicParserRegressionTestCase(unittest.TestCase):
     def test_normalize_row_matches_legacy_shape(self):

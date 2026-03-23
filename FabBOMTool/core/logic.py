@@ -39,6 +39,7 @@ DATA_DIR                     = APP_DIR / "data"
 LEGEND_CACHE_PATH            = DATA_DIR / "Legend.cache.json"
 LEGEND_XLSX_PATH             = APP_DIR / "Legend.xlsx"
 SETTINGS_FILE                = DATA_DIR / "settings.json"
+SETTINGS_BACKUP_FILE         = DATA_DIR / "settings.backup.json"
 COMPANY_DEFAULTS_LOCAL_PATH  = DATA_DIR / "CompanyDefaults.json"
 EXPORTS_DIR                  = APP_DIR / "exports"
 
@@ -599,35 +600,64 @@ def ensure_company_defaults(settings: dict) -> dict:
     return settings
 
 
+def _normalized_settings_payload(settings: dict) -> dict:
+    s = _deep_merge_defaults(settings, DEFAULT_SETTINGS)
+    mats = s.get("material_types", [])
+    if not isinstance(mats, list) or not mats:
+        mats = MATERIAL_TYPE_PRESET
+    s["material_types"] = sort_case_insensitive(
+        dedupe_case_insensitive_keep_first([str(x).strip() for x in mats if str(x).strip()])
+    )
+    s["company_side_multipliers"] = _clean_multiplier_table(s.get("company_side_multipliers", {}))
+    psm = s.get("project_side_multipliers", {})
+    s["project_side_multipliers"] = {
+        str(k).strip(): _clean_multiplier_table(v)
+        for k, v in psm.items()
+        if str(k).strip()
+    }
+    mode = str(s.get("multiplier_mode", "Company") or "Company")
+    s["multiplier_mode"] = mode if mode in ("Company", "Project") else "Company"
+    return ensure_company_defaults(s)
+
+
+def _load_settings_from_file(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return _normalized_settings_payload(payload)
+
+
+def _write_json_file(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def load_settings() -> dict:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if SETTINGS_FILE.exists():
-        try:
-            s = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            s = _deep_merge_defaults(s, DEFAULT_SETTINGS)
-            mats = s.get("material_types", [])
-            if not isinstance(mats, list) or not mats:
-                mats = MATERIAL_TYPE_PRESET
-            s["material_types"] = sort_case_insensitive(dedupe_case_insensitive_keep_first([str(x).strip() for x in mats if str(x).strip()]))
-            s["company_side_multipliers"] = _clean_multiplier_table(s.get("company_side_multipliers", {}))
-            psm = s.get("project_side_multipliers", {})
-            s["project_side_multipliers"] = {str(k).strip(): _clean_multiplier_table(v) for k, v in psm.items() if str(k).strip()}
-            mode = str(s.get("multiplier_mode","Company") or "Company")
-            s["multiplier_mode"] = mode if mode in ("Company","Project") else "Company"
-            s = ensure_company_defaults(s)
-            return s
-        except Exception:
-            pass
+    primary = _load_settings_from_file(SETTINGS_FILE)
+    if primary is not None:
+        return primary
+    backup = _load_settings_from_file(SETTINGS_BACKUP_FILE)
+    if backup is not None:
+        _write_json_file(SETTINGS_FILE, backup)
+        return backup
     s = json.loads(json.dumps(DEFAULT_SETTINGS))
-    s = ensure_company_defaults(s)
-    return s
+    return ensure_company_defaults(s)
 
 
 def save_settings(settings: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     sanitized = ensure_company_defaults(dict(settings))
     sanitized.pop("admin_password", None)
-    SETTINGS_FILE.write_text(json.dumps(sanitized, indent=2), encoding="utf-8")
+    _write_json_file(SETTINGS_FILE, sanitized)
+    _write_json_file(SETTINGS_BACKUP_FILE, sanitized)
 
 # ============================
 # Multiplier lookup
