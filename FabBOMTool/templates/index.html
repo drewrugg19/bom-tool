@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ app_name }}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -12,8 +13,11 @@
   <!-- ═══════════ SIDEBAR ═══════════ -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <div class="app-name">{{ app_name }}</div>
-      <div class="app-ver">v{{ app_version }}</div>
+      <img class="app-logo" src="/static/logo.svg" alt="{{ app_name }} logo" />
+      <div>
+        <div class="app-name">{{ app_name }}</div>
+        <div class="app-ver">v{{ app_version }}</div>
+      </div>
     </div>
     <nav class="nav">
       <div class="nav-label">Workspace</div>
@@ -137,6 +141,17 @@
 
       <!-- ══════ SETTINGS TAB ══════ -->
       <div class="tab" id="tab-settings">
+        <div class="panel-shell">
+        <div class="panel-lock-overlay" id="settings-lock">
+          <div class="lock-box">
+            <div class="lock-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+            <div class="lock-title">Settings access required</div>
+            <div class="lock-sub">Enter your admin password to continue</div>
+            <input class="lock-inp" type="password" id="settings-pw" placeholder="Password" />
+            <button class="btn btn-primary full" onclick="unlockProtectedArea()">Unlock</button>
+            <div class="lock-err" id="settings-lock-err"></div>
+          </div>
+        </div>
         <div class="settings-grid">
           <div class="settings-nav" id="settings-nav">
             <div class="snav active" data-panel="multipliers">Multipliers</div>
@@ -153,7 +168,8 @@
                   <div class="card-title" style="margin:0">Company-wide multipliers</div>
                   <div style="display:flex;gap:8px">
                     <select class="form-sel" id="mult-mat-sel" style="width:200px"></select>
-                    <button class="btn btn-primary" onclick="saveMultipliers()">Save</button>
+                    <button class="btn" onclick="lockAdminAccess()">Lock</button>
+                  <button class="btn btn-primary" onclick="saveMultipliers()">Save</button>
                   </div>
                 </div>
                 <p class="hint">Select a material type, edit the multipliers for each fitting type, then save.</p>
@@ -211,6 +227,7 @@
           </div>
         </div>
       </div>
+      </div>
 
       <!-- ══════ ADMIN TAB ══════ -->
       <div class="tab" id="tab-admin">
@@ -222,13 +239,17 @@
             <div class="lock-title">Admin access required</div>
             <div class="lock-sub">Enter your admin password to continue</div>
             <input class="lock-inp" type="password" id="admin-pw" placeholder="Password" />
-            <button class="btn btn-primary full" onclick="unlockAdmin()">Unlock</button>
+            <button class="btn btn-primary full" onclick="unlockProtectedArea()">Unlock</button>
             <div class="lock-err" id="lock-err"></div>
           </div>
         </div>
 
         <!-- Admin content -->
         <div id="admin-content">
+          <div class="admin-toolbar">
+            <button class="btn" onclick="lockAdminAccess()">Lock</button>
+            <div class="idle-note">Auto-locks after 2 minutes of inactivity.</div>
+          </div>
           <div class="admin-sec">
             <div class="admin-sec-title">Settings management</div>
             <div class="admin-grid">
