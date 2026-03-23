@@ -181,7 +181,7 @@ def create_app() -> Flask:
         s = load_settings()
         if not password_matches(s, pw):
             return jsonify({"ok": False, "error": "Incorrect password"}), 401
-        from core.logic import DEFAULT_SETTINGS
+        from .core.logic import DEFAULT_SETTINGS
 
         new_s = json.loads(json.dumps(DEFAULT_SETTINGS))
         new_s["admin_password_hash"] = s.get("admin_password_hash", "")
@@ -310,6 +310,6 @@ if __name__ == "__main__":
     print(f"  {APP_NAME}  v{APP_VERSION}")
     print(f"  {'=' * 44}")
     print(f"  Open in browser: http://localhost:{DEFAULT_PORT}")
-    print("  Production server: gunicorn -w 4 -b 0.0.0.0:5000 app:app")
+    print("  Production server: gunicorn -w 4 -b 0.0.0.0:5000 FabBOMTool.app:app")
     print("  Press Ctrl+C to stop\n")
     app.run(debug=_bool_env("FLASK_DEBUG", False), host=DEFAULT_HOST, port=DEFAULT_PORT)
