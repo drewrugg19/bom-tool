@@ -1,16 +1,19 @@
+import importlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-import sys
-sys.path.insert(0, "/workspace/bom-tool/FabBOMTool")
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-import app as app_mod
-import core.history as history_mod
-import core.logic as logic_mod
+app_mod = importlib.import_module("FabBOMTool.app")
+history_mod = importlib.import_module("FabBOMTool.core.history")
+logic_mod = importlib.import_module("FabBOMTool.core.logic")
 
 
 class AppTestCase(unittest.TestCase):
