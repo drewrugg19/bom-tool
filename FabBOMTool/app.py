@@ -12,8 +12,8 @@ from uuid import uuid4
 from flask import Flask, abort, jsonify, render_template, request, send_file
 from werkzeug.exceptions import BadRequest, HTTPException
 
-from core.history import delete_run, get_history, get_run, save_run
-from core.logic import (
+from .core.history import delete_run, get_history, get_run, save_run
+from .core.logic import (
     APP_NAME,
     APP_VERSION,
     DATA_DIR,
