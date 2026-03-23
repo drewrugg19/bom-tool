@@ -168,6 +168,22 @@ class LogicParserRegressionTestCase(unittest.TestCase):
             "Tee",
         )
 
+    def test_classify_fitting_type_with_legend_prioritizes_sanitary_cross_override(self):
+        legend_maps = ({"SANITARY CROSS": "Cross"}, {}, {}, {}, set())
+
+        self.assertEqual(
+            logic_mod.classify_fitting_type_with_legend("4 in Sanitary Cross", legend_maps),
+            "Tee",
+        )
+
+    def test_classify_fitting_type_with_legend_prioritizes_p_trap_override(self):
+        legend_maps = ({}, {}, {}, {}, set())
+
+        self.assertEqual(
+            logic_mod.classify_fitting_type_with_legend("2 in P-Trap", legend_maps),
+            "Tee",
+        )
+
     def test_classify_fitting_type_with_legend_does_not_treat_sixteenth_bend_as_tee(self):
         legend_maps = ({}, {}, {}, {}, set())
 

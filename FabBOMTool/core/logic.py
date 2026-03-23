@@ -318,6 +318,10 @@ def fitting_type_override(description: str) -> str | None:
         return "Elbow"
     if "COMBINATION" in u:
         return "Tee"
+    if "SANITARY CROSS" in u:
+        return "Tee"
+    if re.search(r"\bP[\s-]?TRAP\b", u):
+        return "Tee"
     if "CHARLOTTE NONH 52 S TAPPED FERRULE WITH SOUTHERN RAISED HEAD BRASS PLUG" in _norm_text(description):
         return "Cap"
     return None
