@@ -7,6 +7,7 @@ Zero Tkinter dependencies. Pure Python.
 import re
 import json
 import csv
+import tempfile
 from pathlib import Path
 
 import pdfplumber
@@ -634,8 +635,16 @@ def _load_settings_from_file(path: Path) -> dict | None:
 
 def _write_json_file(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f"{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp_file:
+        json.dump(payload, tmp_file, indent=2)
+        tmp_path = Path(tmp_file.name)
     tmp_path.replace(path)
 
 
@@ -643,6 +652,8 @@ def load_settings() -> dict:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     primary = _load_settings_from_file(SETTINGS_FILE)
     if primary is not None:
+        if _load_settings_from_file(SETTINGS_BACKUP_FILE) is None:
+            _write_json_file(SETTINGS_BACKUP_FILE, primary)
         return primary
     backup = _load_settings_from_file(SETTINGS_BACKUP_FILE)
     if backup is not None:

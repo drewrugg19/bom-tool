@@ -3,7 +3,9 @@ import io
 import json
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -109,6 +111,43 @@ class AppTestCase(unittest.TestCase):
         primary = json.loads((self.data_dir / "settings.json").read_text(encoding="utf-8"))
         backup = json.loads((self.data_dir / "settings.backup.json").read_text(encoding="utf-8"))
         self.assertEqual(primary, backup)
+
+    def test_load_settings_backfills_backup_from_existing_primary(self):
+        settings = dict(logic_mod.DEFAULT_SETTINGS)
+        settings["material_types"] = ["PVC", "Copper"]
+        settings["exclude_fitting_types"]["Valve"] = True
+        (self.data_dir / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+        loaded = logic_mod.load_settings()
+
+        self.assertEqual(loaded["material_types"], ["Copper", "PVC"])
+        backup = json.loads((self.data_dir / "settings.backup.json").read_text(encoding="utf-8"))
+        self.assertEqual(backup["material_types"], ["Copper", "PVC"])
+        self.assertTrue(backup["exclude_fitting_types"]["Valve"])
+
+    def test_write_json_file_uses_unique_temp_files_for_concurrent_writes(self):
+        target = self.data_dir / "settings.json"
+        thread_count = 4
+        barrier = threading.Barrier(thread_count)
+        original_write_text = Path.write_text
+
+        def synced_write_text(path_obj, data, *args, **kwargs):
+            result = original_write_text(path_obj, data, *args, **kwargs)
+            if path_obj.parent == self.data_dir and path_obj.name.startswith(f"{target.name}.") and path_obj.name.endswith(".tmp"):
+                barrier.wait()
+            return result
+
+        def writer(idx):
+            logic_mod._write_json_file(target, {"writer": idx})
+
+        with mock.patch("pathlib.Path.write_text", new=synced_write_text):
+            with ThreadPoolExecutor(max_workers=thread_count) as executor:
+                futures = [executor.submit(writer, idx) for idx in range(thread_count)]
+                for future in futures:
+                    future.result(timeout=5)
+
+        final_payload = json.loads(target.read_text(encoding="utf-8"))
+        self.assertIn(final_payload["writer"], range(thread_count))
 
     def test_upload_legend_validates_required_keys(self):
         response = self.client.post("/api/admin/upload-legend", json={"concat": {}})
