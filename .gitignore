@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.db
+*.xlsx
+FabBOMTool/data/*.json
+!FabBOMTool/data/.gitkeep
+FabBOMTool/exports/*
+!FabBOMTool/exports/.gitkeep
+FabBOMTool/uploads/*
+!FabBOMTool/uploads/.gitkeep
