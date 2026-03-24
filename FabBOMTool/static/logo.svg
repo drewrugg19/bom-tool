@@ -1,23 +1,28 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Fabrication BOM Tool logo</title>
-  <desc id="desc">Blue gradient square with a white segmented elbow pipe icon.</desc>
+  <desc id="desc">Blue gradient square with a centered white elbow pipe icon.</desc>
   <defs>
-    <radialGradient id="bgGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(40 30) rotate(43.3634) scale(131.629)">
-      <stop stop-color="#58A3FF"/>
-      <stop offset="0.62" stop-color="#2B74EE"/>
+    <linearGradient id="bgGradient" x1="20" y1="16" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5EA8FF"/>
+      <stop offset="0.58" stop-color="#2F7CF0"/>
       <stop offset="1" stop-color="#1758DB"/>
-    </radialGradient>
-    <filter id="softShadow" x="19" y="23" width="88" height="81" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#0C46AA" flood-opacity="0.16"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="30" y1="24" x2="96" y2="96" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="20" y="24" width="88" height="84" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0C46AA" flood-opacity="0.18"/>
     </filter>
   </defs>
 
-  <rect width="128" height="128" rx="10" fill="url(#bgGlow)"/>
+  <rect width="128" height="128" rx="18" fill="url(#bgGradient)"/>
+  <rect x="1.5" y="1.5" width="125" height="125" rx="16.5" stroke="#FFFFFF" stroke-opacity="0.18"/>
+  <path d="M26 18H102C91 28 79 36 66 42C54 47 42 51 30 53L26 18Z" fill="url(#shine)" opacity="0.55"/>
 
-  <g filter="url(#softShadow)" fill="#F7F7F5">
-    <rect x="29" y="28" width="34" height="13" rx="1"/>
-    <path d="M53.944 39.5C53.1493 39.5 52.3871 39.8157 51.8251 40.3777L31.8777 60.3251C31.3157 60.8871 31 61.6493 31 62.444V77C31 78.1046 31.8954 79 33 79H61.331C62.0765 79 62.7914 78.705 63.3194 78.179L72.0904 69.439C73.3339 68.1999 73.3458 66.191 72.1171 64.9373L64.1722 56.8291C63.6109 56.2562 63.3662 55.4549 63.511 54.6679L65.8615 41.8901C66.0511 40.8586 65.2591 39.9054 64.2103 39.5112C64.1236 39.5038 64.036 39.5 63.948 39.5H53.944Z"/>
-    <path d="M63.877 39.5C63.0823 39.5 62.3201 39.8157 61.7581 40.3777L52.3777 49.7581C51.8157 50.3201 51.5 51.0823 51.5 51.877V55.7044C51.5 56.4991 51.8157 57.2613 52.3777 57.8233L69.1767 74.6223C69.7387 75.1843 70.5009 75.5 71.2956 75.5H75.123C75.9177 75.5 76.6799 75.1843 77.2419 74.6223L91.6223 60.2419C92.1843 59.6799 92.5 58.9177 92.5 58.123V54.2956C92.5 53.5009 92.1843 52.7387 91.6223 52.1767L78.9456 39.5H63.877Z"/>
-    <rect x="29" y="79" width="34" height="13" rx="1"/>
+  <g filter="url(#shadow)">
+    <path d="M36 40C36 36.6863 38.6863 34 42 34H67C70.3137 34 73 36.6863 73 40V44C73 47.3137 70.3137 50 67 50H58V55.5H70C73.3137 55.5 76 58.1863 76 61.5V66.5C76 69.8137 73.3137 72.5 70 72.5H58V78H82C85.3137 78 88 80.6863 88 84V88C88 91.3137 85.3137 94 82 94H42C38.6863 94 36 91.3137 36 88V84C36 80.6863 38.6863 78 42 78H46V72.5H42C38.6863 72.5 36 69.8137 36 66.5V61.5C36 58.1863 38.6863 55.5 42 55.5H46V50H42C38.6863 50 36 47.3137 36 44V40Z" fill="#F8FAFC"/>
+    <path d="M58 50H61C62.3807 50 63.5 51.1193 63.5 52.5V55.5H58V50Z" fill="#DCEAFB"/>
+    <path d="M58 72.5H63.5V75.5C63.5 76.8807 62.3807 78 61 78H58V72.5Z" fill="#DCEAFB"/>
   </g>
 </svg>
