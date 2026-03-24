@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -140,6 +142,35 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Project name is required", response.get_json()["error"])
 
+    def test_run_accepts_rapid_report_excel_input(self):
+        workbook = io.BytesIO()
+        pd.DataFrame(
+            [
+                {
+                    "Material Spec": "Copper",
+                    "Item Name": "90 Elbow",
+                    "Size": '2"',
+                    "Quantity": 3,
+                }
+            ]
+        ).to_excel(workbook, index=False, sheet_name="Raw Data")
+        workbook.seek(0)
+
+        response = self.client.post(
+            "/api/run",
+            data={
+                "mode": "Company",
+                "project": "",
+                "export_filename": "rapid_demo",
+                "files": (workbook, "rapid_report.xlsx"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["err_rows"], 0)
+
     def test_load_settings_recovers_from_backup_when_primary_is_invalid(self):
         settings = logic_mod.load_settings()
         settings["material_types"] = ["PVC", "Copper"]
@@ -249,6 +280,57 @@ class LogicParserRegressionTestCase(unittest.TestCase):
 
     def test_size_to_diameter_in_uses_largest_dimension(self):
         self.assertEqual(logic_mod.size_to_diameter_in('2 x 1-1/2'), 2.0)
+
+    def test_extract_from_rapid_report_reads_required_headers(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "rapid.xlsx"
+            pd.DataFrame(
+                [
+                    {
+                        "Material Spec": "PVC Sch 40",
+                        "Item Name": "Cap",
+                        "Size": '3"',
+                        "Quantity": 5,
+                        "Ignored": "x",
+                    }
+                ]
+            ).to_excel(path, index=False, sheet_name="Raw Data")
+
+            errors = []
+            out = logic_mod.extract_from_rapid_report(path, errors)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(len(out), 1)
+            self.assertEqual(out.iloc[0]["Material"], "PVC Sch 40")
+            self.assertEqual(out.iloc[0]["Description"], "Cap")
+            self.assertEqual(out.iloc[0]["Count"], 5)
+
+    def test_run_bom_filters_unclassified_rows_for_rapid_report(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            export_dir = base / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            rapid_path = base / "rapid.xlsx"
+            pd.DataFrame(
+                [
+                    {"Material Spec": "Copper", "Item Name": "90 Elbow", "Size": '2"', "Quantity": 2},
+                    {"Material Spec": "Copper", "Item Name": "Unknown Thing", "Size": '2"', "Quantity": 2},
+                ]
+            ).to_excel(rapid_path, index=False, sheet_name="Raw Data")
+
+            settings = logic_mod.ensure_company_defaults(dict(logic_mod.DEFAULT_SETTINGS))
+            with mock.patch.object(logic_mod, "EXPORTS_DIR", export_dir):
+                result = logic_mod.run_bom(
+                    input_paths=[str(rapid_path)],
+                    settings=settings,
+                    export_filename="rapid_filtered",
+                    mode="Company",
+                    project="",
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["rows"], 1)
+            self.assertEqual(result["err_rows"], 0)
 
 
 

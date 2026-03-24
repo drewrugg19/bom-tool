@@ -52,7 +52,7 @@
     <div class="topbar">
       <div>
         <div class="topbar-title" id="page-title">Run</div>
-        <div class="topbar-sub"   id="page-sub">Upload PDFs and process a batch</div>
+        <div class="topbar-sub"   id="page-sub">Upload PDFs or Rapid Reports and process a batch</div>
       </div>
     </div>
 
@@ -65,12 +65,12 @@
           <!-- Left col -->
           <div class="run-left">
             <div class="card">
-              <div class="card-title">PDF files</div>
+              <div class="card-title">Input files</div>
               <div class="dropzone" id="dropzone">
                 <div class="dz-icon">📄</div>
-                <div class="dz-text">Drop PDFs here or <span class="link" id="browse-trigger">browse</span></div>
-                <div class="dz-hint">Multiple files · PDF only</div>
-                <input type="file" id="file-input" accept=".pdf" multiple style="display:none" />
+                <div class="dz-text">Drop files here or <span class="link" id="browse-trigger">browse</span></div>
+                <div class="dz-hint">Multiple files · .pdf .xlsx .xlsm</div>
+                <input type="file" id="file-input" accept=".pdf,.xlsx,.xlsm" multiple style="display:none" />
               </div>
               <div class="file-list" id="file-list"></div>
             </div>

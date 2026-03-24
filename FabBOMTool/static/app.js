@@ -11,7 +11,7 @@ let adminIdleTimer = null;
 const ADMIN_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 
 const TABS = {
-  run:      { title: "Run",      sub: "Upload PDFs and process a batch" },
+  run:      { title: "Run",      sub: "Upload PDFs or Rapid Reports and process a batch" },
   history:  { title: "History",  sub: "Past exports and run logs" },
   settings: { title: "Settings", sub: "Manage multipliers, materials, and exclusions" },
   admin:    { title: "Admin",    sub: "Password, imports/exports, and legend management" },
@@ -61,8 +61,11 @@ dropzone.addEventListener("drop", e => {
 });
 
 function addFiles(files) {
-  const pdfs = files.filter(f => f.name.toLowerCase().endsWith(".pdf"));
-  pdfs.forEach(f => {
+  const supported = files.filter(f => {
+    const lower = f.name.toLowerCase();
+    return lower.endsWith(".pdf") || lower.endsWith(".xlsx") || lower.endsWith(".xlsm");
+  });
+  supported.forEach(f => {
     if (!selectedFiles.find(s => s.name === f.name && s.size === f.size)) {
       selectedFiles.push(f);
     }
@@ -127,7 +130,7 @@ async function runBOM() {
   runBtn.disabled = true;
 
   const fd = new FormData();
-  selectedFiles.forEach(f => fd.append("pdfs", f));
+  selectedFiles.forEach(f => fd.append("files", f));
   fd.append("mode", mode);
   fd.append("project", project);
   fd.append("export_filename", fname);

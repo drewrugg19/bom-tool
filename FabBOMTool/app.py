@@ -202,9 +202,11 @@ def create_app() -> Flask:
 
     @app.post("/api/run")
     def api_run():
-        files = request.files.getlist("pdfs")
+        files = request.files.getlist("files")
+        if not files:
+            files = request.files.getlist("pdfs")
         if not files or all(f.filename == "" for f in files):
-            return jsonify({"ok": False, "error": "No PDF files uploaded"}), 400
+            return jsonify({"ok": False, "error": "No input files uploaded"}), 400
 
         mode = request.form.get("mode", "Company")
         project = request.form.get("project", "").strip()
@@ -216,7 +218,10 @@ def create_app() -> Flask:
 
         saved_paths: list[Path] = []
         for f in files:
-            if not f.filename or not f.filename.lower().endswith(".pdf"):
+            if not f.filename:
+                continue
+            ext = Path(f.filename).suffix.lower()
+            if ext not in (".pdf", ".xlsx", ".xlsm"):
                 continue
             safe_name = f"{uuid4().hex}_{Path(f.filename).name}"
             dest = upload_dir / safe_name
@@ -224,7 +229,7 @@ def create_app() -> Flask:
             saved_paths.append(dest)
 
         if not saved_paths:
-            return jsonify({"ok": False, "error": "No valid PDF files received"}), 400
+            return jsonify({"ok": False, "error": "No valid files received (.pdf, .xlsx, .xlsm)"}), 400
 
         settings = load_settings()
         if skip_unclassified:
@@ -232,7 +237,7 @@ def create_app() -> Flask:
 
         try:
             result = run_bom(
-                pdf_paths=[str(p) for p in saved_paths],
+                input_paths=[str(p) for p in saved_paths],
                 settings=settings,
                 export_filename=export_filename,
                 mode=mode,
