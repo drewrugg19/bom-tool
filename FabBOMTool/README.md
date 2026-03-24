@@ -4,7 +4,7 @@
 
 1. Install Python 3.11+.
 2. Create a virtual environment and install dependencies: `pip install -r requirements.txt`
-3. Start the development server: `python app.py`
+3. Start the development server from the repo root: `python app.py`
 4. Open `http://localhost:5000`
 
 ## Production deployment
@@ -14,6 +14,10 @@ Use a production WSGI server instead of Flask debug mode.
 ```bash
 gunicorn -w 4 -b 0.0.0.0:5000 wsgi:app
 ```
+
+The repository now includes root-level `app.py` and `wsgi.py` shims so common hosts that
+expect `python app.py` or `gunicorn wsgi:app` from the repo root can boot the Flask app
+without extra path configuration.
 
 ### Runtime configuration
 
