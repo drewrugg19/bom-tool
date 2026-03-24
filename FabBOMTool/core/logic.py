@@ -937,53 +937,46 @@ def _parse_count(value):
     return n
 
 
-def extract_from_rapid_report(workbook_path: Path, errors: list) -> pd.DataFrame:
-    expected = {
-        "material spec": "Material Spec",
-        "item name": "Item Name",
-        "size": "Size",
-        "quantity": "Quantity",
-    }
+def extract_from_estimating_inches(workbook_path: Path, errors: list) -> pd.DataFrame:
     try:
         df_raw = pd.read_excel(
             workbook_path,
-            sheet_name="Raw Data",
             dtype=object,
             engine="openpyxl",
+            usecols="G,L,M,N",
+            header=0,
         )
     except Exception as exc:
         errors.append({
-            "Stage": "Rapid Report Open",
+            "Stage": "Estimating Open",
             "Source File": workbook_path.name,
-            "Issue": f"Unable to read Raw Data sheet -> {type(exc).__name__}: {exc}",
+            "Issue": f"Unable to read estimating workbook -> {type(exc).__name__}: {exc}",
         })
         return pd.DataFrame()
 
-    header_lookup = {_normalize_header_name(c): c for c in list(df_raw.columns)}
-    missing = [src for src in expected if src not in header_lookup]
-    if missing:
+    if len(df_raw.columns) != 4:
         errors.append({
-            "Stage": "Rapid Report Extract",
+            "Stage": "Estimating Extract",
             "Source File": workbook_path.name,
-            "Issue": f"Missing required Raw Data headers: {', '.join(sorted(missing))}",
+            "Issue": "Unable to locate required columns G, L, M, N in workbook.",
         })
         return pd.DataFrame()
 
     recs = []
     for _, row in df_raw.iterrows():
-        material = clean_token(row.get(header_lookup["material spec"], ""))
-        item_name = clean_token(row.get(header_lookup["item name"], ""))
-        size = clean_token(row.get(header_lookup["size"], ""))
-        count = _parse_count(row.get(header_lookup["quantity"]))
+        material = clean_token(row.iloc[0])
+        fitting_type = clean_token(row.iloc[1])
+        size = clean_token(row.iloc[2])
+        count = _parse_count(row.iloc[3])
 
-        if not item_name:
+        if not fitting_type:
             continue
 
         recs.append({
             "Batch": "",
             "Size": size,
             "Install Type": "",
-            "Description": item_name,
+            "Description": fitting_type,
             "Count": count,
             "Length": "",
             "Material": material,
@@ -993,9 +986,9 @@ def extract_from_rapid_report(workbook_path: Path, errors: list) -> pd.DataFrame
 
     if not recs:
         errors.append({
-            "Stage": "Rapid Report Extract",
+            "Stage": "Estimating Extract",
             "Source File": workbook_path.name,
-            "Issue": "Raw Data sheet was found, but no usable rows were extracted.",
+            "Issue": "Workbook was found, but no usable rows were extracted from columns G/L/M/N.",
         })
         return pd.DataFrame()
 
@@ -1121,79 +1114,23 @@ def format_error_summary(errors: list, max_files: int = 10, max_lines_per_file: 
 # Main run function
 # ============================
 
-def run_bom(input_paths: list, settings: dict, export_filename: str, mode: str, project: str) -> dict:
-    """
-    Run the full BOM pipeline using the legacy desktop parser flow,
-    adapted to the hosted web app's settings and export structure.
-    """
-    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    settings = ensure_company_defaults(dict(settings))
-    settings["multiplier_mode"] = mode if mode in ("Company", "Project") else "Company"
-    settings["selected_project"] = project if settings["multiplier_mode"] == "Project" else ""
+def _process_workflow_rows(df: pd.DataFrame, settings: dict, project: str, legend_maps, errors: list, drop_unclassified: bool) -> tuple[pd.DataFrame, float, pd.Series]:
+    if df.empty:
+        return df, 0.0, pd.Series(dtype=float)
 
-    errors = []
-    dfs = []
-    legend_maps = load_legend_maps()
-
-    pdf_count = 0
-    rapid_report_count = 0
-    for input_path in input_paths:
-        path = Path(input_path)
-        ext = path.suffix.lower()
-        if ext == ".pdf":
-            pdf_count += 1
-            extracted_df = extract_from_pdf(path, errors)
-        elif ext in (".xlsx", ".xlsm"):
-            rapid_report_count += 1
-            extracted_df = extract_from_rapid_report(path, errors)
-        else:
-            errors.append({
-                "Stage": "Input Validation",
-                "Source File": path.name,
-                "Issue": f"Unsupported input type: {ext or '(none)'}",
-            })
-            continue
-        if not extracted_df.empty:
-            dfs.append(extracted_df)
-
-    out_filename = str(export_filename or "BOM_Export").strip() or "BOM_Export"
-    if not out_filename.endswith(".xlsx"):
-        out_filename += ".xlsx"
-    out_path = EXPORTS_DIR / out_filename
-
-    if not dfs:
-        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-            pd.DataFrame(columns=[]).to_excel(writer, sheet_name="Master", index=False)
-            pd.DataFrame(errors).to_excel(writer, sheet_name="Errors", index=False)
-        format_excel(out_path)
-        return {
-            "ok": True,
-            "total_inches": 0,
-            "rows": 0,
-            "ok_rows": 0,
-            "warn_rows": 0,
-            "err_rows": 0,
-            "errors": len(errors),
-            "output": str(out_path),
-            "output_filename": out_filename,
-            "summary": f"No rows extracted.\n\n{format_error_summary(errors)}",
-        }
-
-    df = pd.concat(dfs, ignore_index=True).drop_duplicates()
+    df = df.copy()
     df.insert(0, "Row ID", range(1, len(df) + 1))
     df["Row Status"] = "OK"
     df["Row Issues"] = ""
-
     df["Fitting Type"] = df["Description"].apply(
         lambda desc: classify_fitting_type_with_legend(desc, legend_maps)
     )
-    rapid_mask = df["Source File"].astype(str).str.lower().str.endswith((".xlsx", ".xlsm"))
-    df = df[~(rapid_mask & (df["Fitting Type"] == "Unclassified"))].copy()
+    if drop_unclassified:
+        df = df[df["Fitting Type"] != "Unclassified"].copy()
 
     ex_map = settings.get("exclude_fitting_types", {})
     df = df[~df["Fitting Type"].map(lambda x: bool(ex_map.get(x, False)))].copy()
     df["Row ID"] = range(1, len(df) + 1)
-
     df["Material Type"] = df["Material"].apply(
         lambda m: material_type_from_material(m, settings.get("material_types", MATERIAL_TYPE_PRESET))
     )
@@ -1201,28 +1138,17 @@ def run_bom(input_paths: list, settings: dict, export_filename: str, mode: str, 
     diameters = []
     for idx, row in df.iterrows():
         try:
-            diameter = size_to_diameter_in(row.get("Size", ""))
-            diameters.append(round(float(diameter), 4))
+            diameters.append(round(float(size_to_diameter_in(row.get("Size", ""))), 4))
         except Exception as exc:
             diameters.append(None)
             msg = f"Size parse failed -> {type(exc).__name__}: {exc}"
             df.at[idx, "Row Status"] = "Error"
             df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Parse",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
+            errors.append({"Stage": "Row Parse", "Source File": row.get("Source File", ""), "Row ID": int(df.at[idx, "Row ID"]), "Issue": msg})
     df["Diameter (in)"] = diameters
 
     df["Side Multiplier"] = df.apply(
-        lambda row: get_effective_multiplier(
-            settings,
-            project,
-            str(row.get("Material Type", "UNKNOWN")),
-            str(row.get("Fitting Type", "Unclassified")),
-        ),
+        lambda row: get_effective_multiplier(settings, project, str(row.get("Material Type", "UNKNOWN")), str(row.get("Fitting Type", "Unclassified"))),
         axis=1,
     )
 
@@ -1236,45 +1162,26 @@ def run_bom(input_paths: list, settings: dict, export_filename: str, mode: str, 
             if df.at[idx, "Row Status"] != "Error":
                 df.at[idx, "Row Status"] = "Warning"
             df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Calc",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
+            errors.append({"Stage": "Row Calc", "Source File": row.get("Source File", ""), "Row ID": int(df.at[idx, "Row ID"]), "Issue": msg})
             continue
         if diameter is None or (isinstance(diameter, float) and pd.isna(diameter)):
             total_inches.append(None)
             msg = "Missing/Invalid Diameter -> Total Inches not calculated"
             df.at[idx, "Row Status"] = "Error"
             df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Calc",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
+            errors.append({"Stage": "Row Calc", "Source File": row.get("Source File", ""), "Row ID": int(df.at[idx, "Row ID"]), "Issue": msg})
             continue
         try:
-            inches = float(diameter) * float(count) * float(row.get("Side Multiplier", FALLBACK_MULTIPLIER))
-            total_inches.append(round(inches, 2))
+            total_inches.append(round(float(diameter) * float(count) * float(row.get("Side Multiplier", FALLBACK_MULTIPLIER)), 2))
         except Exception as exc:
             total_inches.append(None)
             msg = f"Total Inches calc failed -> {type(exc).__name__}: {exc}"
             df.at[idx, "Row Status"] = "Error"
             df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Calc",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
+            errors.append({"Stage": "Row Calc", "Source File": row.get("Source File", ""), "Row ID": int(df.at[idx, "Row ID"]), "Issue": msg})
     df["Total Inches"] = total_inches
 
-    df = df.sort_values(
-        ["Batch", "Material Type", "Fitting Type", "Size", "Install Type", "Description"]
-    ).reset_index(drop=True)
-
+    df = df.sort_values(["Batch", "Material Type", "Fitting Type", "Size", "Install Type", "Description"]).reset_index(drop=True)
     numeric_ti = pd.to_numeric(df["Total Inches"], errors="coerce").fillna(0)
     total_val = float(numeric_ti.sum())
     inches_by_mat = df.assign(_ti=numeric_ti).groupby("Material Type")["_ti"].sum().sort_values(ascending=False)
@@ -1283,44 +1190,140 @@ def run_bom(input_paths: list, settings: dict, export_filename: str, mode: str, 
     total_row["Batch"] = "TOTAL"
     total_row["Total Inches"] = round(total_val, 2)
     df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+    return df, total_val, inches_by_mat
 
-    errors_df = pd.DataFrame(errors)
+
+def run_bom(input_paths: list, settings: dict, export_filename: str, mode: str, project: str, run_mode: str = "fabrication_inches") -> dict:
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    settings = ensure_company_defaults(dict(settings))
+    settings["multiplier_mode"] = mode if mode in ("Company", "Project") else "Company"
+    settings["selected_project"] = project if settings["multiplier_mode"] == "Project" else ""
+
+    normalized_run_mode = str(run_mode or "fabrication_inches").strip().lower()
+    valid_modes = {"fabrication_inches", "estimating_inches", "compare_fabrication_vs_estimate"}
+    if normalized_run_mode not in valid_modes:
+        normalized_run_mode = "fabrication_inches"
+
+    errors = []
+    legend_maps = load_legend_maps()
+    fabrication_dfs = []
+    estimating_dfs = []
+    pdf_count = 0
+    estimating_count = 0
+
+    for input_path in input_paths:
+        path = Path(input_path)
+        ext = path.suffix.lower()
+        if ext == ".pdf":
+            pdf_count += 1
+            extracted_df = extract_from_pdf(path, errors)
+            if not extracted_df.empty:
+                fabrication_dfs.append(extracted_df)
+        elif ext in (".xlsx", ".xlsm"):
+            estimating_count += 1
+            extracted_df = extract_from_estimating_inches(path, errors)
+            if not extracted_df.empty:
+                estimating_dfs.append(extracted_df)
+        else:
+            errors.append({"Stage": "Input Validation", "Source File": path.name, "Issue": f"Unsupported input type: {ext or '(none)'}"})
+
+    out_filename = str(export_filename or "BOM_Export").strip() or "BOM_Export"
+    if not out_filename.endswith(".xlsx"):
+        out_filename += ".xlsx"
+    out_path = EXPORTS_DIR / out_filename
+
+    fab_source = pd.concat(fabrication_dfs, ignore_index=True).drop_duplicates() if fabrication_dfs else pd.DataFrame()
+    est_source = pd.concat(estimating_dfs, ignore_index=True).drop_duplicates() if estimating_dfs else pd.DataFrame()
+
+    fab_processed, fab_total, fab_by_mat = pd.DataFrame(), 0.0, pd.Series(dtype=float)
+    est_processed, est_total, est_by_mat = pd.DataFrame(), 0.0, pd.Series(dtype=float)
+    if normalized_run_mode in {"fabrication_inches", "compare_fabrication_vs_estimate"} and not fab_source.empty:
+        fab_processed, fab_total, fab_by_mat = _process_workflow_rows(fab_source, settings, project, legend_maps, errors, drop_unclassified=False)
+    if normalized_run_mode in {"estimating_inches", "compare_fabrication_vs_estimate"} and not est_source.empty:
+        est_processed, est_total, est_by_mat = _process_workflow_rows(est_source, settings, project, legend_maps, errors, drop_unclassified=True)
+
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Master", index=False)
-        if not errors_df.empty:
-            errors_df.to_excel(writer, sheet_name="Errors", index=False)
+        if normalized_run_mode == "fabrication_inches":
+            (fab_processed if not fab_processed.empty else pd.DataFrame(columns=[])).to_excel(writer, sheet_name="Fabrication Inches", index=False)
+        elif normalized_run_mode == "estimating_inches":
+            (est_processed if not est_processed.empty else pd.DataFrame(columns=[])).to_excel(writer, sheet_name="Estimating Inches", index=False)
+        else:
+            (fab_processed if not fab_processed.empty else pd.DataFrame(columns=[])).to_excel(writer, sheet_name="Fabrication Inches", index=False)
+            (est_processed if not est_processed.empty else pd.DataFrame(columns=[])).to_excel(writer, sheet_name="Estimating Inches", index=False)
+            variance = fab_total - est_total
+            variance_pct = (variance / est_total * 100.0) if est_total else None
+            pd.DataFrame([{
+                "Fabrication Inches": round(fab_total, 2),
+                "Estimating Inches": round(est_total, 2),
+                "Variance Inches": round(variance, 2),
+                "Variance %": round(variance_pct, 2) if variance_pct is not None else "",
+            }]).to_excel(writer, sheet_name="Variance Summary", index=False)
+        if errors:
+            pd.DataFrame(errors).to_excel(writer, sheet_name="Errors", index=False)
     format_excel(out_path)
 
-    ok_rows = int((df["Row Status"] == "OK").sum()) if "Row Status" in df.columns else 0
-    warn_rows = int((df["Row Status"] == "Warning").sum()) if "Row Status" in df.columns else 0
-    err_rows = int((df["Row Status"] == "Error").sum()) if "Row Status" in df.columns else 0
+    if normalized_run_mode == "fabrication_inches":
+        stat_df = fab_processed.iloc[:-1] if not fab_processed.empty else pd.DataFrame()
+        total_inches = fab_total
+        inches_by_mat = fab_by_mat
+    elif normalized_run_mode == "estimating_inches":
+        stat_df = est_processed.iloc[:-1] if not est_processed.empty else pd.DataFrame()
+        total_inches = est_total
+        inches_by_mat = est_by_mat
+    else:
+        stat_df = pd.concat(
+            [fab_processed.iloc[:-1] if not fab_processed.empty else pd.DataFrame(), est_processed.iloc[:-1] if not est_processed.empty else pd.DataFrame()],
+            ignore_index=True,
+        )
+        total_inches = fab_total - est_total
+        inches_by_mat = pd.Series(dtype=float)
+
+    rows_exported = len(stat_df) if not stat_df.empty else 0
+    ok_rows = int((stat_df["Row Status"] == "OK").sum()) if "Row Status" in stat_df.columns else 0
+    warn_rows = int((stat_df["Row Status"] == "Warning").sum()) if "Row Status" in stat_df.columns else 0
+    err_rows = int((stat_df["Row Status"] == "Error").sum()) if "Row Status" in stat_df.columns else 0
+
+    mode_title = {
+        "fabrication_inches": "Fabrication Inches",
+        "estimating_inches": "Estimating Inches",
+        "compare_fabrication_vs_estimate": "Compare Fabrication vs Estimate",
+    }[normalized_run_mode]
 
     summary_lines = [
-        f"{APP_NAME} - SUMMARY",
+        f"{APP_NAME} - {mode_title} Summary",
         f"Version: {APP_VERSION}",
         f"Multiplier Mode: {'One-Off (Project Override)' if mode == 'Project' else 'Company Wide (Default)'}",
         f"Project Override: {project if mode == 'Project' else '(none)'}",
         "------",
-        f"PDFs processed: {pdf_count}",
-        f"Rapid Reports processed: {rapid_report_count}",
-        f"Rows exported (incl. issues): {len(df) - 1}",
+        f"PDF files processed: {pdf_count}",
+        f"Estimating files processed: {estimating_count}",
+        f"Rows exported (incl. issues): {rows_exported}",
         f"Row Status: OK={ok_rows}  Warning={warn_rows}  Error={err_rows}",
         f"Errors logged: {len(errors)}",
         "",
-        f"TOTAL INCHES: {total_val:,.2f}",
-        "",
-        "TOTAL INCHES BY MATERIAL TYPE:",
     ]
-    for material, value in inches_by_mat.items():
-        summary_lines.append(f"  - {material}: {value:,.2f}")
+    if normalized_run_mode == "compare_fabrication_vs_estimate":
+        variance = fab_total - est_total
+        variance_pct = (variance / est_total * 100.0) if est_total else None
+        summary_lines += [
+            f"Fabrication Inches: {fab_total:,.2f}",
+            f"Estimating Inches: {est_total:,.2f}",
+            f"Variance Inches: {variance:,.2f}",
+            f"Variance %: {variance_pct:,.2f}%" if variance_pct is not None else "Variance %: N/A",
+        ]
+    else:
+        summary_lines += [f"TOTAL INCHES: {total_inches:,.2f}", "", "TOTAL INCHES BY MATERIAL TYPE:"]
+        for material, value in inches_by_mat.items():
+            summary_lines.append(f"  - {material}: {value:,.2f}")
     if errors:
         summary_lines += ["", format_error_summary(errors)]
     summary_lines += ["", "Output file:", str(out_path)]
 
     return {
         "ok": True,
-        "total_inches": round(total_val, 2),
-        "rows": len(df) - 1,
+        "run_mode": normalized_run_mode,
+        "total_inches": round(total_inches, 2),
+        "rows": rows_exported,
         "ok_rows": ok_rows,
         "warn_rows": warn_rows,
         "err_rows": err_rows,

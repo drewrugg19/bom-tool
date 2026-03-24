@@ -142,27 +142,38 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Project name is required", response.get_json()["error"])
 
-    def test_run_accepts_rapid_report_excel_input(self):
+    def test_run_accepts_estimating_inches_excel_input(self):
         workbook = io.BytesIO()
         pd.DataFrame(
             [
                 {
-                    "Material Spec": "Copper",
-                    "Item Name": "90 Elbow",
+                    "A": "",
+                    "B": "",
+                    "C": "",
+                    "D": "",
+                    "E": "",
+                    "F": "",
+                    "Material Type": "Copper",
+                    "H": "",
+                    "I": "",
+                    "J": "",
+                    "K": "",
+                    "Fitting Type": "90 Elbow",
                     "Size": '2"',
                     "Quantity": 3,
                 }
             ]
-        ).to_excel(workbook, index=False, sheet_name="Raw Data")
+        ).to_excel(workbook, index=False)
         workbook.seek(0)
 
         response = self.client.post(
             "/api/run",
             data={
                 "mode": "Company",
+                "run_mode": "estimating_inches",
                 "project": "",
-                "export_filename": "rapid_demo",
-                "files": (workbook, "rapid_report.xlsx"),
+                "export_filename": "estimating_demo",
+                "files": (workbook, "estimating_inches.xlsx"),
             },
             content_type="multipart/form-data",
         )
@@ -281,23 +292,32 @@ class LogicParserRegressionTestCase(unittest.TestCase):
     def test_size_to_diameter_in_uses_largest_dimension(self):
         self.assertEqual(logic_mod.size_to_diameter_in('2 x 1-1/2'), 2.0)
 
-    def test_extract_from_rapid_report_reads_required_headers(self):
+    def test_extract_from_estimating_inches_reads_required_columns(self):
         with tempfile.TemporaryDirectory() as td:
-            path = Path(td) / "rapid.xlsx"
+            path = Path(td) / "estimating.xlsx"
             pd.DataFrame(
                 [
                     {
-                        "Material Spec": "PVC Sch 40",
-                        "Item Name": "Cap",
+                        "A": "",
+                        "B": "",
+                        "C": "",
+                        "D": "",
+                        "E": "",
+                        "F": "",
+                        "Material Type": "PVC Sch 40",
+                        "H": "",
+                        "I": "",
+                        "J": "",
+                        "K": "",
+                        "Fitting Type": "Cap",
                         "Size": '3"',
                         "Quantity": 5,
-                        "Ignored": "x",
                     }
                 ]
-            ).to_excel(path, index=False, sheet_name="Raw Data")
+            ).to_excel(path, index=False)
 
             errors = []
-            out = logic_mod.extract_from_rapid_report(path, errors)
+            out = logic_mod.extract_from_estimating_inches(path, errors)
 
             self.assertEqual(errors, [])
             self.assertEqual(len(out), 1)
@@ -305,27 +325,28 @@ class LogicParserRegressionTestCase(unittest.TestCase):
             self.assertEqual(out.iloc[0]["Description"], "Cap")
             self.assertEqual(out.iloc[0]["Count"], 5)
 
-    def test_run_bom_filters_unclassified_rows_for_rapid_report(self):
+    def test_run_bom_filters_unclassified_rows_for_estimating_inches(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             export_dir = base / "exports"
             export_dir.mkdir(parents=True, exist_ok=True)
-            rapid_path = base / "rapid.xlsx"
+            estimating_path = base / "estimating.xlsx"
             pd.DataFrame(
                 [
-                    {"Material Spec": "Copper", "Item Name": "90 Elbow", "Size": '2"', "Quantity": 2},
-                    {"Material Spec": "Copper", "Item Name": "Unknown Thing", "Size": '2"', "Quantity": 2},
+                    {"A": "", "B": "", "C": "", "D": "", "E": "", "F": "", "Material Type": "Copper", "H": "", "I": "", "J": "", "K": "", "Fitting Type": "90 Elbow", "Size": '2"', "Quantity": 2},
+                    {"A": "", "B": "", "C": "", "D": "", "E": "", "F": "", "Material Type": "Copper", "H": "", "I": "", "J": "", "K": "", "Fitting Type": "Unknown Thing", "Size": '2"', "Quantity": 2},
                 ]
-            ).to_excel(rapid_path, index=False, sheet_name="Raw Data")
+            ).to_excel(estimating_path, index=False)
 
             settings = logic_mod.ensure_company_defaults(dict(logic_mod.DEFAULT_SETTINGS))
             with mock.patch.object(logic_mod, "EXPORTS_DIR", export_dir):
                 result = logic_mod.run_bom(
-                    input_paths=[str(rapid_path)],
+                    input_paths=[str(estimating_path)],
                     settings=settings,
-                    export_filename="rapid_filtered",
+                    export_filename="estimating_filtered",
                     mode="Company",
                     project="",
+                    run_mode="estimating_inches",
                 )
 
             self.assertTrue(result["ok"])

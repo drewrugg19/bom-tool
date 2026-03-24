@@ -209,6 +209,7 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "error": "No input files uploaded"}), 400
 
         mode = request.form.get("mode", "Company")
+        run_mode = request.form.get("run_mode", "fabrication_inches")
         project = request.form.get("project", "").strip()
         export_filename = sanitize_export_filename(request.form.get("export_filename", "BOM_Export"))
         skip_unclassified = request.form.get("skip_unclassified", "false").lower() == "true"
@@ -242,6 +243,7 @@ def create_app() -> Flask:
                 export_filename=export_filename,
                 mode=mode,
                 project=project if mode == "Project" else "",
+                run_mode=run_mode,
             )
         except Exception as exc:
             app.logger.exception("BOM run failed")
