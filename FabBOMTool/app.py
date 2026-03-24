@@ -202,12 +202,6 @@ def create_app() -> Flask:
 
     @app.post("/api/run")
     def api_run():
-        files = request.files.getlist("files")
-        if not files:
-            files = request.files.getlist("pdfs")
-        if not files or all(f.filename == "" for f in files):
-            return jsonify({"ok": False, "error": "No input files uploaded"}), 400
-
         mode = request.form.get("mode", "Company")
         run_mode = request.form.get("run_mode", "fabrication_inches")
         project = request.form.get("project", "").strip()
@@ -217,12 +211,49 @@ def create_app() -> Flask:
         if mode == "Project" and not project:
             return jsonify({"ok": False, "error": "Project name is required when Project mode is selected."}), 400
 
+        fabrication_files = request.files.getlist("fabrication_files")
+        estimating_files = request.files.getlist("estimating_file")
+        if not fabrication_files:
+            fabrication_files = request.files.getlist("files") + request.files.getlist("pdfs")
+        if not estimating_files:
+            estimating_files = request.files.getlist("files")
+
+        normalized_run_mode = str(run_mode or "fabrication_inches").strip().lower()
+        files_to_save = []
+        if normalized_run_mode == "fabrication_inches":
+            files_to_save = [f for f in fabrication_files if f and f.filename]
+            if not files_to_save:
+                return jsonify({"ok": False, "error": "Upload at least one fabrication PDF."}), 400
+        elif normalized_run_mode == "estimating_inches":
+            files_to_save = [f for f in estimating_files if f and f.filename]
+            if not files_to_save:
+                return jsonify({"ok": False, "error": "Upload one estimating Excel file."}), 400
+            if len(files_to_save) > 1:
+                return jsonify({"ok": False, "error": "Upload only one estimating Excel file."}), 400
+        elif normalized_run_mode == "compare_fabrication_vs_estimate":
+            fab = [f for f in fabrication_files if f and f.filename]
+            est = [f for f in estimating_files if f and f.filename]
+            if not fab:
+                return jsonify({"ok": False, "error": "Upload fabrication PDFs for compare mode."}), 400
+            if not est:
+                return jsonify({"ok": False, "error": "Upload an estimating Excel file for compare mode."}), 400
+            if len(est) > 1:
+                return jsonify({"ok": False, "error": "Upload only one estimating Excel file for compare mode."}), 400
+            files_to_save = [*fab, *est]
+        else:
+            files_to_save = [f for f in (request.files.getlist("files") or []) if f and f.filename]
+            if not files_to_save:
+                return jsonify({"ok": False, "error": "No input files uploaded"}), 400
+
         saved_paths: list[Path] = []
-        for f in files:
+        for f in files_to_save:
             if not f.filename:
                 continue
             ext = Path(f.filename).suffix.lower()
-            if ext not in (".pdf", ".xlsx", ".xlsm"):
+            allowed = {".pdf"} if normalized_run_mode == "fabrication_inches" else {".xlsx", ".xlsm"}
+            if normalized_run_mode == "compare_fabrication_vs_estimate":
+                allowed = {".pdf", ".xlsx", ".xlsm"}
+            if ext not in allowed:
                 continue
             safe_name = f"{uuid4().hex}_{Path(f.filename).name}"
             dest = upload_dir / safe_name
@@ -230,7 +261,7 @@ def create_app() -> Flask:
             saved_paths.append(dest)
 
         if not saved_paths:
-            return jsonify({"ok": False, "error": "No valid files received (.pdf, .xlsx, .xlsm)"}), 400
+            return jsonify({"ok": False, "error": "No valid files received for the selected run mode."}), 400
 
         settings = load_settings()
         if skip_unclassified:

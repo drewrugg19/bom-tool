@@ -1,7 +1,8 @@
 /* Fabrication BOM Tool — app.js */
 "use strict";
 
-let selectedFiles = [];
+let fabricationFiles = [];
+let estimatingFile = null;
 let settings = {};
 let adminUnlocked = false;
 let currentMat = "";
@@ -35,59 +36,123 @@ document.querySelectorAll(".nav-item[data-tab]").forEach(el => {
   el.addEventListener("click", () => switchTab(el.dataset.tab));
 });
 
-const dropzone = document.getElementById("dropzone");
-const fileInput = document.getElementById("file-input");
-const fileListEl = document.getElementById("file-list");
+const fabricationDropzone = document.getElementById("fabrication-dropzone");
+const fabricationFileInput = document.getElementById("fabrication-file-input");
+const fabricationFileListEl = document.getElementById("fabrication-file-list");
+const estimatingDropzone = document.getElementById("estimating-dropzone");
+const estimatingFileInput = document.getElementById("estimating-file-input");
+const estimatingFileListEl = document.getElementById("estimating-file-list");
 const runBtn = document.getElementById("run-btn");
 const projectNameInput = document.getElementById("project-name");
 const modeSelect = document.getElementById("mult-mode");
 const runModeSelect = document.getElementById("run-mode");
+const fabricationUploadWrap = document.getElementById("fabrication-upload-wrap");
+const estimatingUploadWrap = document.getElementById("estimating-upload-wrap");
 
-document.getElementById("browse-trigger").addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => {
-  addFiles([...fileInput.files]);
-  fileInput.value = "";
+document.getElementById("fabrication-browse-trigger").addEventListener("click", () => fabricationFileInput.click());
+document.getElementById("estimating-browse-trigger").addEventListener("click", () => estimatingFileInput.click());
+fabricationFileInput.addEventListener("change", () => {
+  addFabricationFiles([...fabricationFileInput.files]);
+  fabricationFileInput.value = "";
+});
+estimatingFileInput.addEventListener("change", () => {
+  setEstimatingFile((estimatingFileInput.files || [])[0] || null);
+  estimatingFileInput.value = "";
 });
 
-dropzone.addEventListener("click", () => fileInput.click());
-dropzone.addEventListener("dragover", e => {
+fabricationDropzone.addEventListener("click", () => fabricationFileInput.click());
+fabricationDropzone.addEventListener("dragover", e => {
   e.preventDefault();
-  dropzone.classList.add("over");
+  fabricationDropzone.classList.add("over");
 });
-dropzone.addEventListener("dragleave", () => dropzone.classList.remove("over"));
-dropzone.addEventListener("drop", e => {
+fabricationDropzone.addEventListener("dragleave", () => fabricationDropzone.classList.remove("over"));
+fabricationDropzone.addEventListener("drop", e => {
   e.preventDefault();
-  dropzone.classList.remove("over");
-  addFiles([...e.dataTransfer.files]);
+  fabricationDropzone.classList.remove("over");
+  addFabricationFiles([...e.dataTransfer.files]);
 });
 
-function addFiles(files) {
+estimatingDropzone.addEventListener("click", () => estimatingFileInput.click());
+estimatingDropzone.addEventListener("dragover", e => {
+  e.preventDefault();
+  estimatingDropzone.classList.add("over");
+});
+estimatingDropzone.addEventListener("dragleave", () => estimatingDropzone.classList.remove("over"));
+estimatingDropzone.addEventListener("drop", e => {
+  e.preventDefault();
+  estimatingDropzone.classList.remove("over");
+  setEstimatingFile(([...e.dataTransfer.files].find(f => {
+    const lower = f.name.toLowerCase();
+    return lower.endsWith(".xlsx") || lower.endsWith(".xlsm");
+  })) || null);
+});
+
+function addFabricationFiles(files) {
   const supported = files.filter(f => {
     const lower = f.name.toLowerCase();
-    return lower.endsWith(".pdf") || lower.endsWith(".xlsx") || lower.endsWith(".xlsm");
+    return lower.endsWith(".pdf");
   });
   supported.forEach(f => {
-    if (!selectedFiles.find(s => s.name === f.name && s.size === f.size)) {
-      selectedFiles.push(f);
+    if (!fabricationFiles.find(s => s.name === f.name && s.size === f.size)) {
+      fabricationFiles.push(f);
     }
   });
-  renderFileList();
+  renderFabricationFileList();
 }
 
-function removeFile(name) {
-  selectedFiles = selectedFiles.filter(f => f.name !== name);
-  renderFileList();
+function setEstimatingFile(file) {
+  estimatingFile = file;
+  renderEstimatingFileList();
 }
 
-function renderFileList() {
-  fileListEl.innerHTML = "";
-  selectedFiles.forEach(f => {
+function removeFabricationFile(name) {
+  fabricationFiles = fabricationFiles.filter(f => f.name !== name);
+  renderFabricationFileList();
+}
+
+function clearEstimatingFile() {
+  estimatingFile = null;
+  renderEstimatingFileList();
+}
+
+function renderFabricationFileList() {
+  fabricationFileListEl.innerHTML = "";
+  fabricationFiles.forEach(f => {
     const div = document.createElement("div");
     div.className = "file-item";
     div.innerHTML = `<div class="fdot"></div><div class="fname">${escHtml(f.name)}</div><span class="tag tag-blue">ready</span><div class="frem" data-name="${escHtml(f.name)}">×</div>`;
-    fileListEl.appendChild(div);
+    fabricationFileListEl.appendChild(div);
   });
-  fileListEl.querySelectorAll(".frem").forEach(b => b.addEventListener("click", () => removeFile(b.dataset.name)));
+  fabricationFileListEl.querySelectorAll(".frem").forEach(b => b.addEventListener("click", () => removeFabricationFile(b.dataset.name)));
+  updateRunButtonState();
+}
+
+function renderEstimatingFileList() {
+  estimatingFileListEl.innerHTML = "";
+  if (estimatingFile) {
+    const div = document.createElement("div");
+    div.className = "file-item";
+    div.innerHTML = `<div class="fdot"></div><div class="fname">${escHtml(estimatingFile.name)}</div><span class="tag tag-blue">ready</span><div class="frem">×</div>`;
+    div.querySelector(".frem").addEventListener("click", clearEstimatingFile);
+    estimatingFileListEl.appendChild(div);
+  }
+  updateRunButtonState();
+}
+
+function syncUploadInputsForRunMode() {
+  const runMode = runModeSelect.value;
+  const showFabrication = runMode === "fabrication_inches" || runMode === "compare_fabrication_vs_estimate";
+  const showEstimating = runMode === "estimating_inches" || runMode === "compare_fabrication_vs_estimate";
+  fabricationUploadWrap.style.display = showFabrication ? "block" : "none";
+  estimatingUploadWrap.style.display = showEstimating ? "block" : "none";
+  if (!showFabrication) {
+    fabricationFiles = [];
+    renderFabricationFileList();
+  }
+  if (!showEstimating) {
+    estimatingFile = null;
+    renderEstimatingFileList();
+  }
   updateRunButtonState();
 }
 
@@ -95,6 +160,7 @@ modeSelect.addEventListener("change", function() {
   document.getElementById("project-row").style.display = this.value === "Project" ? "flex" : "none";
   updateRunButtonState();
 });
+runModeSelect.addEventListener("change", syncUploadInputsForRunMode);
 projectNameInput.addEventListener("input", updateRunButtonState);
 
 document.querySelectorAll(".tgl").forEach(t => {
@@ -107,16 +173,27 @@ document.querySelectorAll(".tgl").forEach(t => {
 function updateRunButtonState() {
   const projectRequired = modeSelect.value === "Project";
   const projectReady = !projectRequired || projectNameInput.value.trim().length > 0;
-  runBtn.disabled = selectedFiles.length === 0 || !projectReady;
+  const runMode = runModeSelect.value;
+  const hasFabrication = fabricationFiles.length > 0;
+  const hasEstimating = !!estimatingFile;
+  let filesReady = false;
+  if (runMode === "fabrication_inches") filesReady = hasFabrication;
+  if (runMode === "estimating_inches") filesReady = hasEstimating;
+  if (runMode === "compare_fabrication_vs_estimate") filesReady = hasFabrication && hasEstimating;
+  runBtn.disabled = !filesReady || !projectReady;
 }
 
 runBtn.addEventListener("click", runBOM);
 
 async function runBOM() {
-  if (selectedFiles.length === 0) return;
-
   const mode = modeSelect.value;
   const runMode = runModeSelect.value;
+  const hasFabrication = fabricationFiles.length > 0;
+  const hasEstimating = !!estimatingFile;
+  if (runMode === "fabrication_inches" && !hasFabrication) return;
+  if (runMode === "estimating_inches" && !hasEstimating) return;
+  if (runMode === "compare_fabrication_vs_estimate" && (!hasFabrication || !hasEstimating)) return;
+
   const project = projectNameInput.value.trim();
   const fname = document.getElementById("export-name").value.trim() || "BOM_Export";
   const skipUC = document.getElementById("tgl-skip").classList.contains("on");
@@ -132,7 +209,8 @@ async function runBOM() {
   runBtn.disabled = true;
 
   const fd = new FormData();
-  selectedFiles.forEach(f => fd.append("files", f));
+  fabricationFiles.forEach(f => fd.append("fabrication_files", f));
+  if (estimatingFile) fd.append("estimating_file", estimatingFile);
   fd.append("mode", mode);
   fd.append("run_mode", runMode);
   fd.append("project", project);
@@ -174,6 +252,7 @@ async function runBOM() {
     updateRunButtonState();
   }
 }
+syncUploadInputsForRunMode();
 
 async function loadHistory() {
   const body = document.getElementById("history-body");
