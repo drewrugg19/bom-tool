@@ -172,10 +172,11 @@
                   <div style="display:flex;gap:8px">
                     <select class="form-sel" id="mult-mat-sel" style="width:200px"></select>
                     <button class="btn" onclick="lockAdminAccess()">Lock</button>
-                  <button class="btn btn-primary" onclick="saveMultipliers()">Save</button>
+                    <button class="btn btn-primary" id="save-company-mults-btn" onclick="saveMultipliers()">Save Changes</button>
                   </div>
                 </div>
-                <p class="hint">Select a material type, edit the multipliers for each fitting type, then save.</p>
+                <p class="hint">Edit one or more materials, then save all company multipliers together.</p>
+                <p class="hint unsaved-hint" id="company-mults-unsaved" style="display:none">Unsaved changes</p>
                 <div id="mult-grid" class="mult-grid"></div>
               </div>
             </div>
@@ -216,10 +217,11 @@
                   <div style="display:flex;gap:8px">
                     <select class="form-sel" id="proj-sel" style="width:180px"></select>
                     <button class="btn" onclick="addProject()">Add New Project</button>
-                    <button class="btn btn-primary" onclick="saveProjectMultipliers()">Save</button>
+                    <button class="btn btn-primary" id="save-project-mults-btn" onclick="saveProjectMultipliers()">Save Changes</button>
                   </div>
                 </div>
                 <p class="hint">Per-project multipliers override company defaults when "Project Override" mode is selected on the Run tab.</p>
+                <p class="hint unsaved-hint" id="project-mults-unsaved" style="display:none">Unsaved changes</p>
                 <div id="oneoff-project-list" class="project-list"></div>
                 <div style="margin-bottom:12px">
                   <select class="form-sel" id="proj-mat-sel" style="width:200px"></select>
