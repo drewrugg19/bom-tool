@@ -1,28 +1,21 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Fabrication BOM Tool logo</title>
-  <desc id="desc">Blue gradient square with a centered white elbow pipe icon.</desc>
+  <desc id="desc">Blue rounded square with two white pipe elbow shapes.</desc>
   <defs>
-    <linearGradient id="bgGradient" x1="20" y1="16" x2="108" y2="112" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5EA8FF"/>
-      <stop offset="0.58" stop-color="#2F7CF0"/>
-      <stop offset="1" stop-color="#1758DB"/>
+    <linearGradient id="bg" x1="14" y1="10" x2="114" y2="118" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5C9EF6"/>
+      <stop offset="0.62" stop-color="#2F74D9"/>
+      <stop offset="1" stop-color="#225FC2"/>
     </linearGradient>
-    <linearGradient id="shine" x1="30" y1="24" x2="96" y2="96" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FFFFFF" stop-opacity="0.32"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
-    <filter id="shadow" x="20" y="24" width="88" height="84" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0C46AA" flood-opacity="0.18"/>
-    </filter>
   </defs>
 
-  <rect width="128" height="128" rx="18" fill="url(#bgGradient)"/>
-  <rect x="1.5" y="1.5" width="125" height="125" rx="16.5" stroke="#FFFFFF" stroke-opacity="0.18"/>
-  <path d="M26 18H102C91 28 79 36 66 42C54 47 42 51 30 53L26 18Z" fill="url(#shine)" opacity="0.55"/>
+  <rect x="4" y="4" width="120" height="120" rx="20" fill="url(#bg)"/>
+  <path d="M14 22C37 22 51 22 76 22C70 29 63 35 54 39C42 45 28 49 14 49V22Z" fill="white" opacity="0.25"/>
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="19.25" stroke="white" opacity="0.2"/>
 
-  <g filter="url(#shadow)">
-    <path d="M36 40C36 36.6863 38.6863 34 42 34H67C70.3137 34 73 36.6863 73 40V44C73 47.3137 70.3137 50 67 50H58V55.5H70C73.3137 55.5 76 58.1863 76 61.5V66.5C76 69.8137 73.3137 72.5 70 72.5H58V78H82C85.3137 78 88 80.6863 88 84V88C88 91.3137 85.3137 94 82 94H42C38.6863 94 36 91.3137 36 88V84C36 80.6863 38.6863 78 42 78H46V72.5H42C38.6863 72.5 36 69.8137 36 66.5V61.5C36 58.1863 38.6863 55.5 42 55.5H46V50H42C38.6863 50 36 47.3137 36 44V40Z" fill="#F8FAFC"/>
-    <path d="M58 50H61C62.3807 50 63.5 51.1193 63.5 52.5V55.5H58V50Z" fill="#DCEAFB"/>
-    <path d="M58 72.5H63.5V75.5C63.5 76.8807 62.3807 78 61 78H58V72.5Z" fill="#DCEAFB"/>
+  <g opacity="0.98">
+    <path d="M24 72C24 66.4772 28.4772 62 34 62H50C55.5228 62 60 66.4772 60 72V74H45C39.4772 74 35 78.4772 35 84V98H34C28.4772 98 24 93.5228 24 88V72Z" fill="#EEF3F8"/>
+    <path d="M42 84C42 78.4772 46.4772 74 52 74H66V92C66 97.5228 61.5228 102 56 102H42V84Z" fill="#F7FAFD"/>
+    <path d="M54 44C54 38.4772 58.4772 34 64 34H94V52C94 57.5228 89.5228 62 84 62H70C64.4772 62 60 66.4772 60 72V74H54V44Z" fill="#EEF3F8"/>
   </g>
 </svg>
