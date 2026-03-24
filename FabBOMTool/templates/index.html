@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ app_name }}</title>
-  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/fabrication-bom-logo.png') }}" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
   <!-- ═══════════ SIDEBAR ═══════════ -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <img class="app-logo" src="/static/logo.svg" alt="{{ app_name }} logo" />
+      <img src="{{ url_for('static', filename='images/fabrication-bom-logo.png') }}" alt="Fabrication BOM Tool" class="site-logo">
       <div class="app-meta">
         <div class="app-name">{{ app_name }}</div>
         <div class="app-ver">v{{ app_version }}</div>
