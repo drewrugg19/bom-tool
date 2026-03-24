@@ -62,8 +62,8 @@ body { font-family: var(--font); background: var(--bg); color: var(--tx); font-s
 
 /* ── Sidebar ── */
 .sidebar { width: 218px; min-width: 218px; background: var(--surf); border-right: 0.5px solid var(--bdr); display: flex; flex-direction: column; }
-.sidebar-logo { padding: 20px 18px 16px; border-bottom: 0.5px solid var(--bdr); display: flex; align-items: center; gap: 12px; }
-.app-logo { width: 42px; height: 42px; flex-shrink: 0; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
+.sidebar-logo { padding: 0; border-bottom: 0.5px solid var(--bdr); display: flex; align-items: center; gap: 12px; }
+.site-logo { height: 48px; width: auto; display: block; object-fit: contain; }
 .app-name { font-size: 13px; font-weight: 600; }
 .app-ver  { font-size: 11px; color: var(--tx3); margin-top: 2px; }
 .nav { padding: 10px 0; flex: 1; }
