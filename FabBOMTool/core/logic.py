@@ -913,6 +913,95 @@ def extract_from_pdf(pdf_path: Path, errors: list) -> pd.DataFrame:
     return pd.DataFrame(records).drop_duplicates() if records else pd.DataFrame()
 
 
+def _normalize_header_name(header) -> str:
+    return re.sub(r"\s+", " ", str(header or "").strip()).lower()
+
+
+def _parse_count(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw = value.strip().replace(",", "")
+        if not raw:
+            return None
+        try:
+            n = float(raw)
+        except ValueError:
+            return None
+    else:
+        n = float(value)
+    if pd.isna(n):
+        return None
+    if n.is_integer():
+        return int(n)
+    return n
+
+
+def extract_from_rapid_report(workbook_path: Path, errors: list) -> pd.DataFrame:
+    expected = {
+        "material spec": "Material Spec",
+        "item name": "Item Name",
+        "size": "Size",
+        "quantity": "Quantity",
+    }
+    try:
+        df_raw = pd.read_excel(
+            workbook_path,
+            sheet_name="Raw Data",
+            dtype=object,
+            engine="openpyxl",
+        )
+    except Exception as exc:
+        errors.append({
+            "Stage": "Rapid Report Open",
+            "Source File": workbook_path.name,
+            "Issue": f"Unable to read Raw Data sheet -> {type(exc).__name__}: {exc}",
+        })
+        return pd.DataFrame()
+
+    header_lookup = {_normalize_header_name(c): c for c in list(df_raw.columns)}
+    missing = [src for src in expected if src not in header_lookup]
+    if missing:
+        errors.append({
+            "Stage": "Rapid Report Extract",
+            "Source File": workbook_path.name,
+            "Issue": f"Missing required Raw Data headers: {', '.join(sorted(missing))}",
+        })
+        return pd.DataFrame()
+
+    recs = []
+    for _, row in df_raw.iterrows():
+        material = clean_token(row.get(header_lookup["material spec"], ""))
+        item_name = clean_token(row.get(header_lookup["item name"], ""))
+        size = clean_token(row.get(header_lookup["size"], ""))
+        count = _parse_count(row.get(header_lookup["quantity"]))
+
+        if not item_name:
+            continue
+
+        recs.append({
+            "Batch": "",
+            "Size": size,
+            "Install Type": "",
+            "Description": item_name,
+            "Count": count,
+            "Length": "",
+            "Material": material,
+            "Material Type": "",
+            "Source File": workbook_path.name,
+        })
+
+    if not recs:
+        errors.append({
+            "Stage": "Rapid Report Extract",
+            "Source File": workbook_path.name,
+            "Issue": "Raw Data sheet was found, but no usable rows were extracted.",
+        })
+        return pd.DataFrame()
+
+    return pd.DataFrame(recs).drop_duplicates()
+
+
 def records_from_pdf(pdf_path: str, settings: dict, legend_maps) -> list:
     errors = []
     df = extract_from_pdf(Path(pdf_path), errors)
@@ -1032,7 +1121,7 @@ def format_error_summary(errors: list, max_files: int = 10, max_lines_per_file: 
 # Main run function
 # ============================
 
-def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, project: str) -> dict:
+def run_bom(input_paths: list, settings: dict, export_filename: str, mode: str, project: str) -> dict:
     """
     Run the full BOM pipeline using the legacy desktop parser flow,
     adapted to the hosted web app's settings and export structure.
@@ -1046,10 +1135,26 @@ def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, pr
     dfs = []
     legend_maps = load_legend_maps()
 
-    for pdf_path in pdf_paths:
-        pdf_df = extract_from_pdf(Path(pdf_path), errors)
-        if not pdf_df.empty:
-            dfs.append(pdf_df)
+    pdf_count = 0
+    rapid_report_count = 0
+    for input_path in input_paths:
+        path = Path(input_path)
+        ext = path.suffix.lower()
+        if ext == ".pdf":
+            pdf_count += 1
+            extracted_df = extract_from_pdf(path, errors)
+        elif ext in (".xlsx", ".xlsm"):
+            rapid_report_count += 1
+            extracted_df = extract_from_rapid_report(path, errors)
+        else:
+            errors.append({
+                "Stage": "Input Validation",
+                "Source File": path.name,
+                "Issue": f"Unsupported input type: {ext or '(none)'}",
+            })
+            continue
+        if not extracted_df.empty:
+            dfs.append(extracted_df)
 
     out_filename = str(export_filename or "BOM_Export").strip() or "BOM_Export"
     if not out_filename.endswith(".xlsx"):
@@ -1082,6 +1187,8 @@ def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, pr
     df["Fitting Type"] = df["Description"].apply(
         lambda desc: classify_fitting_type_with_legend(desc, legend_maps)
     )
+    rapid_mask = df["Source File"].astype(str).str.lower().str.endswith((".xlsx", ".xlsm"))
+    df = df[~(rapid_mask & (df["Fitting Type"] == "Unclassified"))].copy()
 
     ex_map = settings.get("exclude_fitting_types", {})
     df = df[~df["Fitting Type"].map(lambda x: bool(ex_map.get(x, False)))].copy()
@@ -1194,7 +1301,8 @@ def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, pr
         f"Multiplier Mode: {'One-Off (Project Override)' if mode == 'Project' else 'Company Wide (Default)'}",
         f"Project Override: {project if mode == 'Project' else '(none)'}",
         "------",
-        f"PDFs processed: {len(pdf_paths)}",
+        f"PDFs processed: {pdf_count}",
+        f"Rapid Reports processed: {rapid_report_count}",
         f"Rows exported (incl. issues): {len(df) - 1}",
         f"Row Status: OK={ok_rows}  Warning={warn_rows}  Error={err_rows}",
         f"Errors logged: {len(errors)}",
