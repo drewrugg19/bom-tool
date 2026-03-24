@@ -62,10 +62,11 @@ body { font-family: var(--font); background: var(--bg); color: var(--tx); font-s
 
 /* ── Sidebar ── */
 .sidebar { width: 218px; min-width: 218px; background: var(--surf); border-right: 0.5px solid var(--bdr); display: flex; flex-direction: column; }
-.sidebar-logo { padding: 20px 18px 16px; border-bottom: 0.5px solid var(--bdr); display: flex; align-items: center; gap: 12px; }
-.app-logo { width: 42px; height: 42px; flex-shrink: 0; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
-.app-name { font-size: 13px; font-weight: 600; }
-.app-ver  { font-size: 11px; color: var(--tx3); margin-top: 2px; }
+.sidebar-logo { padding: 18px 18px 14px; border-bottom: 0.5px solid var(--bdr); display: flex; align-items: center; gap: 12px; min-height: 74px; }
+.app-logo { width: 40px; height: 40px; flex-shrink: 0; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
+.app-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.app-name { font-size: 14px; font-weight: 650; line-height: 1.25; letter-spacing: .01em; color: var(--tx); white-space: normal; text-wrap: balance; }
+.app-ver  { font-size: 11px; color: var(--tx3); line-height: 1.2; }
 .nav { padding: 10px 0; flex: 1; }
 .nav-label { font-size: 10px; font-weight: 600; color: var(--tx3); letter-spacing: .08em; text-transform: uppercase; padding: 8px 18px 4px; }
 .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 18px; font-size: 13px; color: var(--tx2); cursor: pointer; text-decoration: none; border-left: 2px solid transparent; transition: background .1s, color .1s; }
