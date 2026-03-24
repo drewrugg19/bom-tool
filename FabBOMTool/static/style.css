@@ -63,7 +63,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--tx); font-s
 /* ── Sidebar ── */
 .sidebar { width: 218px; min-width: 218px; background: var(--surf); border-right: 0.5px solid var(--bdr); display: flex; flex-direction: column; }
 .sidebar-logo { padding: 18px 18px 14px; border-bottom: 0.5px solid var(--bdr); display: flex; align-items: center; gap: 12px; min-height: 74px; }
-.app-logo { width: 40px; height: 40px; border-radius: 9px; object-fit: cover; flex-shrink: 0; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
+.app-logo { width: 40px; height: 40px; flex-shrink: 0; filter: drop-shadow(0 2px 6px rgba(0,0,0,.12)); }
 .app-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .app-name { font-size: 14px; font-weight: 650; line-height: 1.25; letter-spacing: .01em; color: var(--tx); white-space: normal; text-wrap: balance; }
 .app-ver  { font-size: 11px; color: var(--tx3); line-height: 1.2; }
