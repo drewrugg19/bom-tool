@@ -102,7 +102,10 @@
                 </div>
                 <div class="form-row" id="project-row" style="display:none">
                   <label class="form-lbl">Project name</label>
-                  <input class="form-inp" id="project-name" placeholder="e.g. 3000 KIRLIN-WAY" />
+                  <select class="form-sel" id="project-name"></select>
+                  <div class="hint" id="project-empty-msg" style="display:none;margin:4px 0 0">
+                    No one-off projects exist yet. Create one in Settings → One-Off Projects.
+                  </div>
                 </div>
                 <div class="form-row">
                   <label class="form-lbl">Export filename</label>
@@ -157,7 +160,7 @@
             <div class="snav active" data-panel="multipliers">Multipliers</div>
             <div class="snav" data-panel="materials">Material types</div>
             <div class="snav" data-panel="exclusions">Exclusions</div>
-            <div class="snav" data-panel="projects">Project overrides</div>
+            <div class="snav" data-panel="projects">One-Off Projects</div>
           </div>
           <div class="settings-panels">
 
@@ -209,14 +212,15 @@
             <div class="spanel" id="panel-projects">
               <div class="card">
                 <div class="card-header-row">
-                  <div class="card-title" style="margin:0">Project overrides</div>
+                  <div class="card-title" style="margin:0">One-Off Projects</div>
                   <div style="display:flex;gap:8px">
                     <select class="form-sel" id="proj-sel" style="width:180px"></select>
-                    <button class="btn" onclick="addProject()">+ New</button>
+                    <button class="btn" onclick="addProject()">Add New Project</button>
                     <button class="btn btn-primary" onclick="saveProjectMultipliers()">Save</button>
                   </div>
                 </div>
                 <p class="hint">Per-project multipliers override company defaults when "Project Override" mode is selected on the Run tab.</p>
+                <div id="oneoff-project-list" class="project-list"></div>
                 <div style="margin-bottom:12px">
                   <select class="form-sel" id="proj-mat-sel" style="width:200px"></select>
                 </div>

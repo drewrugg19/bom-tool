@@ -208,6 +208,23 @@ body { font-family: var(--font); background: var(--bg); color: var(--tx); font-s
 .chip-x { cursor: pointer; color: var(--tx3); font-size: 15px; line-height: 1; }
 .chip-x:hover { color: var(--red); }
 
+/* ── One-off projects ── */
+.project-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.project-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg);
+  border: 0.5px solid var(--bdr);
+  border-radius: var(--r);
+  padding: 8px 10px;
+}
+.project-name { font-size: 12px; font-weight: 600; color: var(--tx); }
+.project-actions { display: flex; gap: 6px; }
+.btn-danger { border-color: color-mix(in srgb, var(--red) 40%, var(--bdr2)); color: var(--red); }
+.btn-danger:hover { background: var(--red-lt); }
+
 /* ── Exclusions ── */
 .excl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
 .excl-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--bg); border-radius: var(--r); font-size: 12px; cursor: pointer; }

@@ -39,7 +39,8 @@ const dropzone = document.getElementById("dropzone");
 const fileInput = document.getElementById("file-input");
 const fileListEl = document.getElementById("file-list");
 const runBtn = document.getElementById("run-btn");
-const projectNameInput = document.getElementById("project-name");
+const projectNameSelect = document.getElementById("project-name");
+const projectEmptyMsg = document.getElementById("project-empty-msg");
 const modeSelect = document.getElementById("mult-mode");
 
 document.getElementById("browse-trigger").addEventListener("click", () => fileInput.click());
@@ -87,11 +88,8 @@ function renderFileList() {
   updateRunButtonState();
 }
 
-modeSelect.addEventListener("change", function() {
-  document.getElementById("project-row").style.display = this.value === "Project" ? "flex" : "none";
-  updateRunButtonState();
-});
-projectNameInput.addEventListener("input", updateRunButtonState);
+modeSelect.addEventListener("change", syncRunProjectUI);
+projectNameSelect.addEventListener("change", updateRunButtonState);
 
 document.querySelectorAll(".tgl").forEach(t => {
   t.addEventListener("click", () => {
@@ -102,7 +100,7 @@ document.querySelectorAll(".tgl").forEach(t => {
 
 function updateRunButtonState() {
   const projectRequired = modeSelect.value === "Project";
-  const projectReady = !projectRequired || projectNameInput.value.trim().length > 0;
+  const projectReady = !projectRequired || projectNameSelect.value.trim().length > 0;
   runBtn.disabled = selectedFiles.length === 0 || !projectReady;
 }
 
@@ -112,12 +110,12 @@ async function runBOM() {
   if (selectedFiles.length === 0) return;
 
   const mode = modeSelect.value;
-  const project = projectNameInput.value.trim();
+  const project = projectNameSelect.value.trim();
   const fname = document.getElementById("export-name").value.trim() || "BOM_Export";
   const skipUC = document.getElementById("tgl-skip").classList.contains("on");
 
   if (mode === "Project" && !project) {
-    document.getElementById("run-err").textContent = "Enter a project name for Project mode.";
+    document.getElementById("run-err").textContent = "Select a one-off project for Project mode.";
     return;
   }
 
@@ -229,6 +227,7 @@ async function loadSettingsUI() {
   renderMaterials();
   renderExclusions();
   renderProjectSel();
+  renderRunProjectOptions();
   syncProtectedPanels();
 }
 
@@ -355,15 +354,24 @@ async function saveExclusions() {
 
 function renderProjectSel() {
   const sel = document.getElementById("proj-sel");
+  const prevSelection = sel.value;
   sel.innerHTML = '<option value="">— select project —</option>';
   const psm = settings.project_side_multipliers || {};
-  Object.keys(psm).sort().forEach(p => {
+  const names = Object.keys(psm).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  names.forEach(p => {
     const opt = document.createElement("option");
     opt.value = p;
     opt.textContent = p;
     sel.appendChild(opt);
   });
-  sel.onchange = () => renderProjMatSel(sel.value);
+  sel.value = names.includes(prevSelection) ? prevSelection : "";
+  sel.onchange = () => {
+    renderProjMatSel(sel.value);
+    renderProjectList();
+  };
+  renderProjectList();
+  renderProjMatSel(sel.value);
+  renderRunProjectOptions();
 }
 
 function renderProjMatSel(proj) {
@@ -406,13 +414,109 @@ function renderProjMultGrid(proj, mat) {
 }
 
 function addProject() {
-  const name = prompt("New project name:")?.trim();
+  const name = prompt("New one-off project name:")?.trim();
   if (!name) return;
   if (!settings.project_side_multipliers) settings.project_side_multipliers = {};
-  if (!settings.project_side_multipliers[name]) settings.project_side_multipliers[name] = {};
+  const existingName = Object.keys(settings.project_side_multipliers).find(p => p.toLowerCase() === name.toLowerCase());
+  if (existingName) {
+    alert("A one-off project with that name already exists.");
+    return;
+  }
+  settings.project_side_multipliers[name] = buildDefaultProjectTable();
   renderProjectSel();
   document.getElementById("proj-sel").value = name;
   renderProjMatSel(name);
+  renderProjectList();
+}
+
+function buildDefaultProjectTable() {
+  const projectTable = {};
+  const fts = settings.fitting_types || window.FBT.fittingTypes;
+  sortedMaterialTypes().forEach(mat => {
+    projectTable[mat] = {};
+    fts.forEach(ft => {
+      projectTable[mat][ft] = 2.0;
+    });
+  });
+  return projectTable;
+}
+
+function renderProjectList() {
+  const list = document.getElementById("oneoff-project-list");
+  if (!list) return;
+  const current = document.getElementById("proj-sel").value;
+  const names = getSortedProjectNames();
+  if (!names.length) {
+    list.innerHTML = '<p class="hint" style="margin:0">No one-off projects saved yet. Use "Add New Project" to create your first one.</p>';
+    return;
+  }
+  list.innerHTML = "";
+  names.forEach(name => {
+    const row = document.createElement("div");
+    row.className = "project-item";
+    row.innerHTML = `
+      <div class="project-name">${escHtml(name)}</div>
+      <div class="project-actions">
+        <button class="btn" data-action="edit" data-project="${escHtml(name)}">Edit</button>
+        <button class="btn btn-danger" data-action="delete" data-project="${escHtml(name)}">Delete</button>
+      </div>`;
+    if (name === current) row.style.borderColor = "var(--blue)";
+    list.appendChild(row);
+  });
+  list.querySelectorAll("button").forEach(btn => {
+    const project = btn.dataset.project;
+    if (btn.dataset.action === "edit") {
+      btn.addEventListener("click", () => selectProjectForEditing(project));
+    } else {
+      btn.addEventListener("click", () => deleteProject(project));
+    }
+  });
+}
+
+function selectProjectForEditing(projectName) {
+  const sel = document.getElementById("proj-sel");
+  sel.value = projectName;
+  renderProjMatSel(projectName);
+  renderProjectList();
+}
+
+function deleteProject(projectName) {
+  if (!confirm(`Delete one-off project "${projectName}"? This cannot be undone.`)) return;
+  const psm = settings.project_side_multipliers || {};
+  delete psm[projectName];
+  settings.project_side_multipliers = psm;
+  renderProjectSel();
+  showToast(`Deleted ${projectName}`);
+}
+
+function getSortedProjectNames() {
+  return Object.keys(settings.project_side_multipliers || {})
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+function renderRunProjectOptions() {
+  const currentValue = projectNameSelect.value;
+  const names = getSortedProjectNames();
+  projectNameSelect.innerHTML = "";
+  if (!names.length) {
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "— no one-off projects available —";
+    projectNameSelect.appendChild(empty);
+  } else {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "— select project —";
+    projectNameSelect.appendChild(placeholder);
+    names.forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      projectNameSelect.appendChild(opt);
+    });
+  }
+  projectNameSelect.value = names.includes(currentValue) ? currentValue : "";
+  syncRunProjectUI();
 }
 
 async function saveProjectMultipliers() {
@@ -699,6 +803,16 @@ function escHtml(s) {
 (async function init() {
   settings = await fetchJson("/api/settings");
   sortMaterialTypesInState();
+  renderRunProjectOptions();
   syncProtectedPanels();
   updateRunButtonState();
 })();
+
+function syncRunProjectUI() {
+  const showProject = modeSelect.value === "Project";
+  const names = getSortedProjectNames();
+  document.getElementById("project-row").style.display = showProject ? "flex" : "none";
+  projectNameSelect.style.display = showProject ? "block" : "none";
+  projectEmptyMsg.style.display = showProject && names.length === 0 ? "block" : "none";
+  updateRunButtonState();
+}
