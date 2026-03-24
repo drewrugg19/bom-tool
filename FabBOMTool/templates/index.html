@@ -52,7 +52,7 @@
     <div class="topbar">
       <div>
         <div class="topbar-title" id="page-title">Run</div>
-        <div class="topbar-sub"   id="page-sub">Upload PDFs or Rapid Reports and process a batch</div>
+        <div class="topbar-sub"   id="page-sub">Upload files and process inch workflows</div>
       </div>
     </div>
 
@@ -93,6 +93,14 @@
             <div class="card">
               <div class="card-title">Run options</div>
               <div class="form-col">
+                <div class="form-row">
+                  <label class="form-lbl">Run mode</label>
+                  <select class="form-sel" id="run-mode">
+                    <option value="fabrication_inches">Fabrication Inches (Default)</option>
+                    <option value="estimating_inches">Estimating Inches</option>
+                    <option value="compare_fabrication_vs_estimate">Compare Fabrication vs Estimate</option>
+                  </select>
+                </div>
                 <div class="form-row">
                   <label class="form-lbl">Multiplier mode</label>
                   <select class="form-sel" id="mult-mode">

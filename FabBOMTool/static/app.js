@@ -11,7 +11,7 @@ let adminIdleTimer = null;
 const ADMIN_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 
 const TABS = {
-  run:      { title: "Run",      sub: "Upload PDFs or Rapid Reports and process a batch" },
+  run:      { title: "Run",      sub: "Upload files and process inch workflows" },
   history:  { title: "History",  sub: "Past exports and run logs" },
   settings: { title: "Settings", sub: "Manage multipliers, materials, and exclusions" },
   admin:    { title: "Admin",    sub: "Password, imports/exports, and legend management" },
@@ -41,6 +41,7 @@ const fileListEl = document.getElementById("file-list");
 const runBtn = document.getElementById("run-btn");
 const projectNameInput = document.getElementById("project-name");
 const modeSelect = document.getElementById("mult-mode");
+const runModeSelect = document.getElementById("run-mode");
 
 document.getElementById("browse-trigger").addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => {
@@ -115,6 +116,7 @@ async function runBOM() {
   if (selectedFiles.length === 0) return;
 
   const mode = modeSelect.value;
+  const runMode = runModeSelect.value;
   const project = projectNameInput.value.trim();
   const fname = document.getElementById("export-name").value.trim() || "BOM_Export";
   const skipUC = document.getElementById("tgl-skip").classList.contains("on");
@@ -132,6 +134,7 @@ async function runBOM() {
   const fd = new FormData();
   selectedFiles.forEach(f => fd.append("files", f));
   fd.append("mode", mode);
+  fd.append("run_mode", runMode);
   fd.append("project", project);
   fd.append("export_filename", fname);
   fd.append("skip_unclassified", skipUC ? "true" : "false");
