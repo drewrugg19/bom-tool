@@ -7,6 +7,8 @@ let adminUnlocked = false;
 let currentMat = "";
 let currentProjMat = "";
 let adminIdleTimer = null;
+let companyMultipliersDirty = false;
+let projectMultipliersDirty = false;
 
 const ADMIN_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -18,6 +20,12 @@ const TABS = {
 };
 
 function switchTab(name) {
+  const currentTab = document.querySelector(".nav-item.active")?.dataset.tab || "run";
+  if (name !== currentTab && hasUnsavedMultiplierChanges()) {
+    const proceed = confirm("You have unsaved multiplier changes. Leave this tab anyway?");
+    if (!proceed) return;
+  }
+
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
   document.getElementById("tab-" + name).classList.add("active");
@@ -222,6 +230,8 @@ async function deleteRun(id, btn) {
 
 async function loadSettingsUI() {
   settings = await fetchJson("/api/settings");
+  setCompanyMultipliersDirty(false);
+  setProjectMultipliersDirty(false);
   sortMaterialTypesInState();
   renderMaterialSel();
   renderMaterials();
@@ -253,6 +263,7 @@ function renderMaterialSel() {
   currentMat = mats.includes(currentMat) ? currentMat : (mats[0] || "");
   sel.value = currentMat;
   sel.onchange = () => {
+    captureCompanyGridEdits();
     currentMat = sel.value;
     renderMultGrid(currentMat);
   };
@@ -264,6 +275,8 @@ function renderMultGrid(mat) {
   grid.innerHTML = "";
   const fittingTypes = settings.fitting_types || window.FBT.fittingTypes;
   const csm = settings.company_side_multipliers || {};
+  if (mat && !csm[mat]) csm[mat] = {};
+  settings.company_side_multipliers = csm;
   const matRow = csm[mat] || {};
   fittingTypes.forEach(ft => {
     const cell = document.createElement("div");
@@ -272,18 +285,22 @@ function renderMultGrid(mat) {
     cell.innerHTML = `<div class="mult-cell-lbl">${escHtml(ft)}</div><input class="mult-inp" type="number" step="0.01" min="0" max="10" value="${val}" data-ft="${escHtml(ft)}" />`;
     grid.appendChild(cell);
   });
+
+  grid.querySelectorAll(".mult-inp").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const ft = inp.dataset.ft;
+      const val = parseFloat(inp.value);
+      if (Number.isNaN(val) || !mat) return;
+      settings.company_side_multipliers[mat][ft] = val;
+      setCompanyMultipliersDirty(true);
+    });
+  });
 }
 
 async function saveMultipliers() {
-  if (!currentMat) return;
-  if (!settings.company_side_multipliers) settings.company_side_multipliers = {};
-  if (!settings.company_side_multipliers[currentMat]) settings.company_side_multipliers[currentMat] = {};
-  document.querySelectorAll("#mult-grid .mult-inp").forEach(inp => {
-    const ft = inp.dataset.ft;
-    const val = parseFloat(inp.value);
-    if (!Number.isNaN(val)) settings.company_side_multipliers[currentMat][ft] = val;
-  });
+  captureCompanyGridEdits();
   await postSettings({ company_side_multipliers: settings.company_side_multipliers });
+  setCompanyMultipliersDirty(false);
   showToast("Multipliers saved");
 }
 
@@ -366,6 +383,7 @@ function renderProjectSel() {
   });
   sel.value = names.includes(prevSelection) ? prevSelection : "";
   sel.onchange = () => {
+    captureProjectGridEdits();
     renderProjMatSel(sel.value);
     renderProjectList();
   };
@@ -375,6 +393,7 @@ function renderProjectSel() {
 }
 
 function renderProjMatSel(proj) {
+  captureProjectGridEdits();
   if (!proj) {
     document.getElementById("proj-mult-grid").innerHTML = "";
     return;
@@ -391,6 +410,7 @@ function renderProjMatSel(proj) {
   currentProjMat = mats.includes(currentProjMat) ? currentProjMat : (mats[0] || "");
   sel.value = currentProjMat;
   sel.onchange = () => {
+    captureProjectGridEdits();
     currentProjMat = sel.value;
     renderProjMultGrid(proj, currentProjMat);
   };
@@ -403,6 +423,9 @@ function renderProjMultGrid(proj, mat) {
   if (!proj || !mat) return;
   const fts = settings.fitting_types || window.FBT.fittingTypes;
   const psm = settings.project_side_multipliers || {};
+  if (!psm[proj]) psm[proj] = {};
+  if (!psm[proj][mat]) psm[proj][mat] = {};
+  settings.project_side_multipliers = psm;
   const matRow = (psm[proj] && psm[proj][mat]) || {};
   fts.forEach(ft => {
     const cell = document.createElement("div");
@@ -410,6 +433,16 @@ function renderProjMultGrid(proj, mat) {
     const val = matRow[ft] !== undefined ? matRow[ft] : 2.0;
     cell.innerHTML = `<div class="mult-cell-lbl">${escHtml(ft)}</div><input class="mult-inp" type="number" step="0.01" min="0" max="10" value="${val}" data-ft="${escHtml(ft)}" />`;
     grid.appendChild(cell);
+  });
+
+  grid.querySelectorAll(".mult-inp").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const ft = inp.dataset.ft;
+      const val = parseFloat(inp.value);
+      if (Number.isNaN(val) || !proj || !mat) return;
+      settings.project_side_multipliers[proj][mat][ft] = val;
+      setProjectMultipliersDirty(true);
+    });
   });
 }
 
@@ -423,6 +456,7 @@ function addProject() {
     return;
   }
   settings.project_side_multipliers[name] = buildDefaultProjectTable();
+  setProjectMultipliersDirty(true);
   renderProjectSel();
   document.getElementById("proj-sel").value = name;
   renderProjMatSel(name);
@@ -474,6 +508,7 @@ function renderProjectList() {
 }
 
 function selectProjectForEditing(projectName) {
+  captureProjectGridEdits();
   const sel = document.getElementById("proj-sel");
   sel.value = projectName;
   renderProjMatSel(projectName);
@@ -485,6 +520,7 @@ function deleteProject(projectName) {
   const psm = settings.project_side_multipliers || {};
   delete psm[projectName];
   settings.project_side_multipliers = psm;
+  setProjectMultipliersDirty(true);
   renderProjectSel();
   showToast(`Deleted ${projectName}`);
 }
@@ -529,6 +565,26 @@ async function saveProjectMultipliers() {
     alert("Add at least one material type first.");
     return;
   }
+  captureProjectGridEdits();
+  await postSettings({ project_side_multipliers: settings.project_side_multipliers });
+  setProjectMultipliersDirty(false);
+  showToast("Project multipliers saved");
+}
+
+function captureCompanyGridEdits() {
+  if (!currentMat) return;
+  if (!settings.company_side_multipliers) settings.company_side_multipliers = {};
+  if (!settings.company_side_multipliers[currentMat]) settings.company_side_multipliers[currentMat] = {};
+  document.querySelectorAll("#mult-grid .mult-inp").forEach(inp => {
+    const ft = inp.dataset.ft;
+    const val = parseFloat(inp.value);
+    if (!Number.isNaN(val)) settings.company_side_multipliers[currentMat][ft] = val;
+  });
+}
+
+function captureProjectGridEdits() {
+  const proj = document.getElementById("proj-sel").value;
+  if (!proj || !currentProjMat) return;
   if (!settings.project_side_multipliers) settings.project_side_multipliers = {};
   if (!settings.project_side_multipliers[proj]) settings.project_side_multipliers[proj] = {};
   if (!settings.project_side_multipliers[proj][currentProjMat]) settings.project_side_multipliers[proj][currentProjMat] = {};
@@ -537,8 +593,26 @@ async function saveProjectMultipliers() {
     const val = parseFloat(inp.value);
     if (!Number.isNaN(val)) settings.project_side_multipliers[proj][currentProjMat][ft] = val;
   });
-  await postSettings({ project_side_multipliers: settings.project_side_multipliers });
-  showToast("Project multipliers saved");
+}
+
+function setCompanyMultipliersDirty(isDirty) {
+  companyMultipliersDirty = isDirty;
+  const hint = document.getElementById("company-mults-unsaved");
+  const btn = document.getElementById("save-company-mults-btn");
+  if (hint) hint.style.display = isDirty ? "block" : "none";
+  if (btn) btn.disabled = !isDirty;
+}
+
+function setProjectMultipliersDirty(isDirty) {
+  projectMultipliersDirty = isDirty;
+  const hint = document.getElementById("project-mults-unsaved");
+  const btn = document.getElementById("save-project-mults-btn");
+  if (hint) hint.style.display = isDirty ? "block" : "none";
+  if (btn) btn.disabled = !isDirty;
+}
+
+function hasUnsavedMultiplierChanges() {
+  return companyMultipliersDirty || projectMultipliersDirty;
 }
 
 
@@ -802,6 +876,8 @@ function escHtml(s) {
 
 (async function init() {
   settings = await fetchJson("/api/settings");
+  setCompanyMultipliersDirty(false);
+  setProjectMultipliersDirty(false);
   sortMaterialTypesInState();
   renderRunProjectOptions();
   syncProtectedPanels();
@@ -816,3 +892,9 @@ function syncRunProjectUI() {
   projectEmptyMsg.style.display = showProject && names.length === 0 ? "block" : "none";
   updateRunButtonState();
 }
+
+window.addEventListener("beforeunload", e => {
+  if (!hasUnsavedMultiplierChanges()) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
