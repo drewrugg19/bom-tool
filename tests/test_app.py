@@ -147,23 +147,13 @@ class AppTestCase(unittest.TestCase):
         pd.DataFrame(
             [
                 {
-                    "A": "",
-                    "B": "",
-                    "C": "",
-                    "D": "",
-                    "E": "",
-                    "F": "",
-                    "Material Type": "Copper",
-                    "H": "",
-                    "I": "",
-                    "J": "",
-                    "K": "",
-                    "Fitting Type": "90 Elbow",
+                    "Material Spec": "Copper",
+                    "Item Name": "90 Elbow",
                     "Size": '2"',
                     "Quantity": 3,
                 }
             ]
-        ).to_excel(workbook, index=False)
+        ).to_excel(workbook, index=False, sheet_name="Raw Data")
         workbook.seek(0)
 
         response = self.client.post(
@@ -298,23 +288,13 @@ class LogicParserRegressionTestCase(unittest.TestCase):
             pd.DataFrame(
                 [
                     {
-                        "A": "",
-                        "B": "",
-                        "C": "",
-                        "D": "",
-                        "E": "",
-                        "F": "",
-                        "Material Type": "PVC Sch 40",
-                        "H": "",
-                        "I": "",
-                        "J": "",
-                        "K": "",
-                        "Fitting Type": "Cap",
+                        "Material Spec": "PVC Sch 40",
+                        "Item Name": "Cap",
                         "Size": '3"',
                         "Quantity": 5,
                     }
                 ]
-            ).to_excel(path, index=False)
+            ).to_excel(path, index=False, sheet_name="Raw Data")
 
             errors = []
             out = logic_mod.extract_from_estimating_inches(path, errors)
@@ -333,10 +313,10 @@ class LogicParserRegressionTestCase(unittest.TestCase):
             estimating_path = base / "estimating.xlsx"
             pd.DataFrame(
                 [
-                    {"A": "", "B": "", "C": "", "D": "", "E": "", "F": "", "Material Type": "Copper", "H": "", "I": "", "J": "", "K": "", "Fitting Type": "90 Elbow", "Size": '2"', "Quantity": 2},
-                    {"A": "", "B": "", "C": "", "D": "", "E": "", "F": "", "Material Type": "Copper", "H": "", "I": "", "J": "", "K": "", "Fitting Type": "Unknown Thing", "Size": '2"', "Quantity": 2},
+                    {"Material Spec": "Copper", "Item Name": "90 Elbow", "Size": '2"', "Quantity": 2},
+                    {"Material Spec": "Copper", "Item Name": "Unknown Thing", "Size": '2"', "Quantity": 2},
                 ]
-            ).to_excel(estimating_path, index=False)
+            ).to_excel(estimating_path, index=False, sheet_name="Raw Data")
 
             settings = logic_mod.ensure_company_defaults(dict(logic_mod.DEFAULT_SETTINGS))
             with mock.patch.object(logic_mod, "EXPORTS_DIR", export_dir):
@@ -352,6 +332,48 @@ class LogicParserRegressionTestCase(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(result["rows"], 1)
             self.assertEqual(result["err_rows"], 0)
+
+    def test_compare_mode_writes_comparison_summary_sheet(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            export_dir = base / "exports"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            estimating_path = base / "estimating.xlsx"
+            pd.DataFrame(
+                [{"Material Spec": "Copper", "Item Name": "90 Elbow", "Size": '2"', "Quantity": 2}]
+            ).to_excel(estimating_path, index=False, sheet_name="Raw Data")
+
+            fabrication_df = pd.DataFrame(
+                [
+                    {
+                        "Batch": "B11111",
+                        "Size": '2"',
+                        "Install Type": "THD",
+                        "Description": "90 ELBOW",
+                        "Count": 3,
+                        "Length": '1"',
+                        "Material": "Copper",
+                        "Material Type": "",
+                        "Source File": "fab.pdf",
+                    }
+                ]
+            )
+            settings = logic_mod.ensure_company_defaults(dict(logic_mod.DEFAULT_SETTINGS))
+            with mock.patch.object(logic_mod, "EXPORTS_DIR", export_dir), mock.patch.object(
+                logic_mod, "extract_from_pdf", return_value=fabrication_df
+            ):
+                result = logic_mod.run_bom(
+                    input_paths=[str(base / "fab.pdf"), str(estimating_path)],
+                    settings=settings,
+                    export_filename="compare_v1",
+                    mode="Company",
+                    project="",
+                    run_mode="compare_fabrication_vs_estimate",
+                )
+
+            self.assertTrue(result["ok"])
+            workbook = pd.ExcelFile(export_dir / "compare_v1.xlsx")
+            self.assertIn("Comparison Summary", workbook.sheet_names)
 
 
 

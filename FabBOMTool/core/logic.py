@@ -939,13 +939,7 @@ def _parse_count(value):
 
 def extract_from_estimating_inches(workbook_path: Path, errors: list) -> pd.DataFrame:
     try:
-        df_raw = pd.read_excel(
-            workbook_path,
-            dtype=object,
-            engine="openpyxl",
-            usecols="G,L,M,N",
-            header=0,
-        )
+        df_raw = pd.read_excel(workbook_path, sheet_name="Raw Data", dtype=object, engine="openpyxl", header=0)
     except Exception as exc:
         errors.append({
             "Stage": "Estimating Open",
@@ -954,20 +948,28 @@ def extract_from_estimating_inches(workbook_path: Path, errors: list) -> pd.Data
         })
         return pd.DataFrame()
 
-    if len(df_raw.columns) != 4:
+    header_map = {_normalize_header_name(col): col for col in df_raw.columns}
+    required_headers = {
+        "material spec": "Material Spec",
+        "item name": "Item Name",
+        "size": "Size",
+        "quantity": "Quantity",
+    }
+    missing = [display for key, display in required_headers.items() if key not in header_map]
+    if missing:
         errors.append({
             "Stage": "Estimating Extract",
             "Source File": workbook_path.name,
-            "Issue": "Unable to locate required columns G, L, M, N in workbook.",
+            "Issue": f"Raw Data sheet is missing required columns: {', '.join(missing)}.",
         })
         return pd.DataFrame()
 
     recs = []
     for _, row in df_raw.iterrows():
-        material = clean_token(row.iloc[0])
-        fitting_type = clean_token(row.iloc[1])
-        size = clean_token(row.iloc[2])
-        count = _parse_count(row.iloc[3])
+        material = clean_token(row[header_map["material spec"]])
+        fitting_type = clean_token(row[header_map["item name"]])
+        size = clean_token(row[header_map["size"]])
+        count = _parse_count(row[header_map["quantity"]])
 
         if not fitting_type:
             continue
@@ -988,11 +990,53 @@ def extract_from_estimating_inches(workbook_path: Path, errors: list) -> pd.Data
         errors.append({
             "Stage": "Estimating Extract",
             "Source File": workbook_path.name,
-            "Issue": "Workbook was found, but no usable rows were extracted from columns G/L/M/N.",
+            "Issue": "Workbook was found, but no usable rows were extracted from Raw Data.",
         })
         return pd.DataFrame()
 
     return pd.DataFrame(recs).drop_duplicates()
+
+
+def _comparison_summary_df(fab_processed: pd.DataFrame, est_processed: pd.DataFrame) -> pd.DataFrame:
+    key_cols = ["Material Type", "Fitting Type", "Size"]
+
+    def aggregate(df: pd.DataFrame, out_col: str) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(columns=[*key_cols, out_col])
+        base = df.iloc[:-1].copy() if "Batch" in df.columns and not df.empty and str(df.iloc[-1].get("Batch", "")) == "TOTAL" else df.copy()
+        if base.empty:
+            return pd.DataFrame(columns=[*key_cols, out_col])
+        base["_ti"] = pd.to_numeric(base.get("Total Inches"), errors="coerce").fillna(0.0)
+        grouped = base.groupby(key_cols, as_index=False)["_ti"].sum()
+        grouped.rename(columns={"_ti": out_col}, inplace=True)
+        return grouped
+
+    fab_grouped = aggregate(fab_processed, "Fabrication Inches")
+    est_grouped = aggregate(est_processed, "Estimating Inches")
+    summary = fab_grouped.merge(est_grouped, on=key_cols, how="outer")
+    summary["Fabrication Inches"] = pd.to_numeric(summary.get("Fabrication Inches"), errors="coerce").fillna(0.0)
+    summary["Estimating Inches"] = pd.to_numeric(summary.get("Estimating Inches"), errors="coerce").fillna(0.0)
+    summary["Variance Inches"] = summary["Fabrication Inches"] - summary["Estimating Inches"]
+    summary["Variance %"] = summary.apply(
+        lambda row: (row["Variance Inches"] / row["Estimating Inches"] * 100.0) if row["Estimating Inches"] else "N/A",
+        axis=1,
+    )
+    summary = summary.sort_values(key_cols).reset_index(drop=True)
+
+    total_fab = float(summary["Fabrication Inches"].sum()) if not summary.empty else 0.0
+    total_est = float(summary["Estimating Inches"].sum()) if not summary.empty else 0.0
+    total_var = total_fab - total_est
+    overall_var_pct = (total_var / total_est * 100.0) if total_est else "N/A"
+    totals_row = {
+        "Material Type": "TOTAL",
+        "Fitting Type": "",
+        "Size": "",
+        "Fabrication Inches": round(total_fab, 2),
+        "Estimating Inches": round(total_est, 2),
+        "Variance Inches": round(total_var, 2),
+        "Variance %": round(overall_var_pct, 2) if overall_var_pct != "N/A" else "N/A",
+    }
+    return pd.concat([summary, pd.DataFrame([totals_row])], ignore_index=True)
 
 
 def records_from_pdf(pdf_path: str, settings: dict, legend_maps) -> list:
@@ -1050,6 +1094,10 @@ def format_excel(path: Path) -> None:
         fmt_col("Diameter (in)", "0.00")
         fmt_col("Side Multiplier", "0.00")
         fmt_col("Total Inches", "0.00")
+        fmt_col("Fabrication Inches", "0.00")
+        fmt_col("Estimating Inches", "0.00")
+        fmt_col("Variance Inches", "0.00")
+        fmt_col("Variance %", "0.00")
         if ws.max_row >= 2:
             ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
             table_name = f"Tbl_{re.sub(r'[^A-Za-z0-9]', '', sheet_name)[:20] or 'Sheet'}"
@@ -1250,14 +1298,7 @@ def run_bom(input_paths: list, settings: dict, export_filename: str, mode: str, 
         else:
             (fab_processed if not fab_processed.empty else pd.DataFrame(columns=[])).to_excel(writer, sheet_name="Fabrication Inches", index=False)
             (est_processed if not est_processed.empty else pd.DataFrame(columns=[])).to_excel(writer, sheet_name="Estimating Inches", index=False)
-            variance = fab_total - est_total
-            variance_pct = (variance / est_total * 100.0) if est_total else None
-            pd.DataFrame([{
-                "Fabrication Inches": round(fab_total, 2),
-                "Estimating Inches": round(est_total, 2),
-                "Variance Inches": round(variance, 2),
-                "Variance %": round(variance_pct, 2) if variance_pct is not None else "",
-            }]).to_excel(writer, sheet_name="Variance Summary", index=False)
+            _comparison_summary_df(fab_processed, est_processed).to_excel(writer, sheet_name="Comparison Summary", index=False)
         if errors:
             pd.DataFrame(errors).to_excel(writer, sheet_name="Errors", index=False)
     format_excel(out_path)
