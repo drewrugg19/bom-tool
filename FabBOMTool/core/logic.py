@@ -7,6 +7,8 @@ Zero Tkinter dependencies. Pure Python.
 import re
 import json
 import csv
+import logging
+import unicodedata
 from pathlib import Path
 
 import pdfplumber
@@ -26,6 +28,7 @@ except Exception:
 APP_NAME    = "Fabrication BOM Tool"
 APP_VERSION = "2026.3.3"
 DEFAULT_ADMIN_PASSWORD = "FBT2026!"
+logger = logging.getLogger(__name__)
 
 # ============================
 # Paths
@@ -193,7 +196,7 @@ HARDCODED_COMPANY_SIDE_MULTIPLIERS = {
 # ============================
 
 def clean_token(x) -> str:
-    return str(x).replace("\u201c",'"').replace("\u201d",'"').replace("\n"," ").strip()
+    return unicodedata.normalize("NFKC", str(x)).replace("\u201c",'"').replace("\u201d",'"').replace("\n"," ").strip()
 
 def _norm_text(s: str) -> str:
     s = str(s or "").upper()
@@ -691,7 +694,8 @@ def get_effective_multiplier(settings: dict, project: str, material: str, fittin
 # ============================
 
 def _clean_size_text(s: str) -> str:
-    s = clean_token(s).replace("ø","").replace("Ø","").replace('"',"").lower()
+    s = clean_token(s).replace("ø","").replace("Ø","").replace("⌀", "").replace('"',"").lower()
+    s = s.replace("×", "x")
     s = re.sub(r"[^0-9x/\-.\s]"," ",s)
     return re.sub(r"\s+"," ",s).strip()
 
@@ -713,22 +717,32 @@ def parse_single_size(s: str) -> float:
     raise ValueError(f"Unparseable size: {s}")
 
 
-def size_to_diameter_in(size_str: str) -> float:
+def parse_size_diameters(size_str: str) -> list[float]:
     s = _clean_size_text(size_str)
-    s = re.sub(r"\s*x\s*"," x ",s)
+    s = re.sub(r"\s*x\s*", " x ", s)
     parts = [p.strip() for p in s.split(" x ") if p.strip()]
     if not parts:
         raise ValueError(f"No parsable size parts: {size_str}")
-    parsed = []
+
+    parsed: list[float] = []
     for p in parts:
         try:
             parsed.append(parse_single_size(p))
+            continue
         except Exception:
-            m = re.search(r"\d+(\.\d+)?|\d+\s*/\s*\d+|\d+\s*-\s*\d+\s*/\s*\d+|\d+\s+\d+\s*/\s*\d+", p)
-            if m: parsed.append(parse_single_size(m.group(0)))
+            pass
+
+        m = re.search(r"\d+\s+\d+\s*/\s*\d+|\d+\s*-\s*\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(\.\d+)?", p)
+        if m:
+            parsed.append(parse_single_size(m.group(0)))
+
     if not parsed:
         raise ValueError(f"Could not parse any diameter from: {size_str}")
-    return max(parsed)
+    return parsed
+
+
+def size_to_diameter_in(size_str: str) -> float:
+    return max(parse_size_diameters(size_str))
 
 # ============================
 # Batch finding
@@ -769,10 +783,55 @@ def normalize_row(row: list, source_file: str, filename_batch, reject_log: list)
     items = [c for c in items if c and c.lower() != "none"]
     if not items:
         return None
+    raw_row_text = " | ".join(items[:20])
+    logger.debug("PDF row raw text: %s", raw_row_text)
+
+    split_parts = []
+    for tok in items:
+        if "|" in tok:
+            split_parts.extend(clean_token(p) for p in tok.split("|"))
+        else:
+            split_parts.append(tok)
+    split_parts = [p for p in split_parts if p]
+    logger.debug("PDF row split parts: %s", split_parts)
+
+    if len(split_parts) >= 7:
+        size_raw, install_type, description, count_raw, length_raw, material, batch_raw = split_parts[:7]
+        size = _clean_size_text(size_raw)
+        install_type = clean_token(install_type)
+        description = clean_token(description)
+        material = clean_token(material)
+        batch = _find_batch_in_row([batch_raw] + split_parts[7:] + items, filename_batch)
+        length_token, _trailing = _split_length_and_trailing_material(length_raw)
+
+        try:
+            count_match = re.search(r"\d+", count_raw)
+            count = int(count_match.group(0)) if count_match else None
+        except Exception:
+            count = None
+
+        if size and install_type and description and material and batch and count is not None and length_token:
+            return {
+                "Batch": batch,
+                "Size": size,
+                "Install Type": install_type,
+                "Description": description,
+                "Count": count,
+                "Length": length_token,
+                "Material": material,
+                "Material Type": "",
+                "Source File": source_file,
+            }
+
+        reason = "Structured row parse failed"
+        reject_log.append({"Reason": reason, "Row Preview": raw_row_text, "Split Parts": " | ".join(split_parts[:12])})
+        logger.debug("PDF row rejected: %s | reason=%s", raw_row_text, reason)
 
     batch = _find_batch_in_row(items, filename_batch)
     if not batch:
-        reject_log.append({"Reason": "Missing Batch", "Row Preview": " | ".join(items[:12])})
+        reason = "Missing Batch"
+        reject_log.append({"Reason": reason, "Row Preview": " | ".join(items[:12])})
+        logger.debug("PDF row rejected: %s | reason=%s", raw_row_text, reason)
         return None
 
     idx_len = None
@@ -789,7 +848,9 @@ def normalize_row(row: list, source_file: str, filename_batch, reject_log: list)
             break
 
     if idx_len is None or not length_token:
-        reject_log.append({"Reason": "Missing Length pattern", "Row Preview": " | ".join(items[:12])})
+        reason = "Missing Length pattern"
+        reject_log.append({"Reason": reason, "Row Preview": " | ".join(items[:12])})
+        logger.debug("PDF row rejected: %s | reason=%s", raw_row_text, reason)
         return None
 
     count = None
@@ -812,19 +873,25 @@ def normalize_row(row: list, source_file: str, filename_batch, reject_log: list)
         material_tokens.append(tok)
     material = " ".join([t for t in material_tokens if t]).strip()
     if not material:
-        reject_log.append({"Reason": "Missing Material segment", "Row Preview": " | ".join(items[:12])})
+        reason = "Missing Material segment"
+        reject_log.append({"Reason": reason, "Row Preview": " | ".join(items[:12])})
+        logger.debug("PDF row rejected: %s | reason=%s", raw_row_text, reason)
         return None
 
     left = items[:idx_count]
     if len(left) < 3:
-        reject_log.append({"Reason": "Left side too short", "Row Preview": " | ".join(items[:12])})
+        reason = "Left side too short"
+        reject_log.append({"Reason": reason, "Row Preview": " | ".join(items[:12])})
+        logger.debug("PDF row rejected: %s | reason=%s", raw_row_text, reason)
         return None
 
     size = left[0].replace("ø", "").replace("Ø", "").replace('"', "").strip()
     install_type = left[1].strip()
     description = " ".join(left[2:]).strip()
     if not description:
-        reject_log.append({"Reason": "Missing Description", "Row Preview": " | ".join(items[:12])})
+        reason = "Missing Description"
+        reject_log.append({"Reason": reason, "Row Preview": " | ".join(items[:12])})
+        logger.debug("PDF row rejected: %s | reason=%s", raw_row_text, reason)
         return None
 
     return {
