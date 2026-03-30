@@ -1060,6 +1060,11 @@ def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, pr
         with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
             pd.DataFrame(columns=[]).to_excel(writer, sheet_name="Master", index=False)
             pd.DataFrame(errors).to_excel(writer, sheet_name="Errors", index=False)
+            pd.DataFrame(columns=["Material Type", "Total Inches"]).to_excel(
+                writer,
+                sheet_name="Summary",
+                index=False,
+            )
         format_excel(out_path)
         return {
             "ok": True,
@@ -1171,6 +1176,9 @@ def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, pr
     numeric_ti = pd.to_numeric(df["Total Inches"], errors="coerce").fillna(0)
     total_val = float(numeric_ti.sum())
     inches_by_mat = df.assign(_ti=numeric_ti).groupby("Material Type")["_ti"].sum().sort_values(ascending=False)
+    summary_df = inches_by_mat.rename_axis("Material Type").reset_index(name="Total Inches")
+    summary_total_row = pd.DataFrame([{"Material Type": "TOTAL", "Total Inches": round(total_val, 2)}])
+    summary_df = pd.concat([summary_df, summary_total_row], ignore_index=True)
 
     total_row = {c: "" for c in df.columns}
     total_row["Batch"] = "TOTAL"
@@ -1180,6 +1188,7 @@ def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, pr
     errors_df = pd.DataFrame(errors)
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         df.to_excel(writer, sheet_name="Master", index=False)
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
         if not errors_df.empty:
             errors_df.to_excel(writer, sheet_name="Errors", index=False)
     format_excel(out_path)

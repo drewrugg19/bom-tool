@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from openpyxl import load_workbook
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -156,6 +159,54 @@ class AppTestCase(unittest.TestCase):
         restored_primary = json.loads((self.data_dir / "settings.json").read_text(encoding="utf-8"))
         self.assertEqual(restored_primary["material_types"], ["Copper", "PVC"])
         self.assertTrue(restored_primary["exclude_fitting_types"]["Valve"])
+
+    def test_run_bom_creates_summary_sheet_with_inches_by_material_type(self):
+        extracted_rows = pd.DataFrame(
+            [
+                {
+                    "Batch": "B12345",
+                    "Size": '2"',
+                    "Install Type": "GROOVED",
+                    "Description": "FIG 777 COUPLING",
+                    "Count": 2,
+                    "Length": '10"',
+                    "Material": "PVC",
+                    "Source File": "first.pdf",
+                },
+                {
+                    "Batch": "B12345",
+                    "Size": '1"',
+                    "Install Type": "THREADED",
+                    "Description": "90 ELBOW",
+                    "Count": 3,
+                    "Length": '8"',
+                    "Material": "COPPER",
+                    "Source File": "first.pdf",
+                },
+            ]
+        )
+
+        with mock.patch.object(logic_mod, "extract_from_pdf", return_value=extracted_rows):
+            result = logic_mod.run_bom(
+                pdf_paths=["first.pdf"],
+                settings=logic_mod.load_settings(),
+                export_filename="summary-sheet-test",
+                mode="Company",
+                project="",
+            )
+
+        self.assertTrue(result["ok"])
+        wb = load_workbook(result["output"], data_only=True)
+        self.assertIn("Summary", wb.sheetnames)
+        summary = wb["Summary"]
+        self.assertEqual(summary["A1"].value, "Material Type")
+        self.assertEqual(summary["B1"].value, "Total Inches")
+        self.assertEqual(summary["A2"].value, "PVC")
+        self.assertEqual(summary["B2"].value, 4)
+        self.assertEqual(summary["A3"].value, "Copper")
+        self.assertEqual(summary["B3"].value, 3)
+        self.assertEqual(summary["A4"].value, "TOTAL")
+        self.assertEqual(summary["B4"].value, 7)
 
 class LogicParserRegressionTestCase(unittest.TestCase):
     def test_normalize_row_matches_legacy_shape(self):
