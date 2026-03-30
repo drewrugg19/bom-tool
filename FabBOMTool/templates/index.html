@@ -155,6 +155,10 @@
             <div class="lock-err" id="settings-lock-err"></div>
           </div>
         </div>
+        <div class="settings-toolbar">
+          <button class="btn" onclick="lockAdminAccess()">Lock</button>
+          <div class="idle-note">Auto-locks after 2 minutes of inactivity.</div>
+        </div>
         <div class="settings-grid">
           <div class="settings-nav" id="settings-nav">
             <div class="snav active" data-panel="multipliers">Multipliers</div>
@@ -171,7 +175,6 @@
                   <div class="card-title" style="margin:0">Company-wide multipliers</div>
                   <div style="display:flex;gap:8px">
                     <select class="form-sel" id="mult-mat-sel" style="width:200px"></select>
-                    <button class="btn" onclick="lockAdminAccess()">Lock</button>
                     <button class="btn btn-primary" id="save-company-mults-btn" onclick="saveMultipliers()">Save Changes</button>
                   </div>
                 </div>
