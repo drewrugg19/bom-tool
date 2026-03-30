@@ -691,7 +691,8 @@ def get_effective_multiplier(settings: dict, project: str, material: str, fittin
 # ============================
 
 def _clean_size_text(s: str) -> str:
-    s = clean_token(s).replace("ø","").replace("Ø","").replace('"',"").lower()
+    s = clean_token(s).replace("ø","").replace("Ø","").replace("⌀", "").replace('"',"").lower()
+    s = s.replace("×", "x")
     s = re.sub(r"[^0-9x/\-.\s]"," ",s)
     return re.sub(r"\s+"," ",s).strip()
 
@@ -713,22 +714,32 @@ def parse_single_size(s: str) -> float:
     raise ValueError(f"Unparseable size: {s}")
 
 
-def size_to_diameter_in(size_str: str) -> float:
+def parse_size_diameters(size_str: str) -> list[float]:
     s = _clean_size_text(size_str)
-    s = re.sub(r"\s*x\s*"," x ",s)
+    s = re.sub(r"\s*x\s*", " x ", s)
     parts = [p.strip() for p in s.split(" x ") if p.strip()]
     if not parts:
         raise ValueError(f"No parsable size parts: {size_str}")
-    parsed = []
+
+    parsed: list[float] = []
     for p in parts:
         try:
             parsed.append(parse_single_size(p))
+            continue
         except Exception:
-            m = re.search(r"\d+(\.\d+)?|\d+\s*/\s*\d+|\d+\s*-\s*\d+\s*/\s*\d+|\d+\s+\d+\s*/\s*\d+", p)
-            if m: parsed.append(parse_single_size(m.group(0)))
+            pass
+
+        m = re.search(r"\d+\s+\d+\s*/\s*\d+|\d+\s*-\s*\d+\s*/\s*\d+|\d+\s*/\s*\d+|\d+(\.\d+)?", p)
+        if m:
+            parsed.append(parse_single_size(m.group(0)))
+
     if not parsed:
         raise ValueError(f"Could not parse any diameter from: {size_str}")
-    return max(parsed)
+    return parsed
+
+
+def size_to_diameter_in(size_str: str) -> float:
+    return max(parse_size_diameters(size_str))
 
 # ============================
 # Batch finding
