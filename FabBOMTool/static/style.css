@@ -236,7 +236,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--tx); font-s
 .excl-item input { cursor: pointer; accent-color: var(--blue); }
 
 /* ── Admin ── */
-.admin-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
+.admin-toolbar, .settings-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
 .idle-note { font-size: 12px; color: var(--tx3); }
 .admin-sec { margin-bottom: 26px; }
 .admin-sec-title { font-size: 10px; font-weight: 700; color: var(--tx3); letter-spacing: .07em; text-transform: uppercase; padding-bottom: 8px; border-bottom: 0.5px solid var(--bdr); margin-bottom: 12px; }
