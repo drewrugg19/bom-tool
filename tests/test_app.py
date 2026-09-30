@@ -1,6 +1,7 @@
 import importlib
 import io
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ if str(ROOT) not in sys.path:
 app_mod = importlib.import_module("FabBOMTool.app")
 history_mod = importlib.import_module("FabBOMTool.core.history")
 logic_mod = importlib.import_module("FabBOMTool.core.logic")
+spool_mod = importlib.import_module("FabBOMTool.core.spool_reader")
 
 
 class AppTestCase(unittest.TestCase):
@@ -51,6 +53,122 @@ class AppTestCase(unittest.TestCase):
         for patcher in reversed(self.patchers):
             patcher.stop()
         self.temp_dir.cleanup()
+
+    def test_sequential_spool_requests_use_only_current_upload(self):
+        received = []
+        paths = []
+
+        def capture(pdf_paths, export_filename, exports_dir):
+            received.append([path.read_bytes() for path in pdf_paths])
+            paths.extend(pdf_paths)
+            return {"ok": True, "rows": [], "row_count": 0, "diagnostics": []}
+
+        with mock.patch.object(app_mod, "run_spool_reader", side_effect=capture):
+            for name, content in [("first.pdf", b"%PDF-first"), ("second.pdf", b"%PDF-second")]:
+                response = self.client.post(
+                    "/api/spool-reader/run",
+                    data={"pdfs": (io.BytesIO(content), name)},
+                    content_type="multipart/form-data",
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(all(not path.exists() for path in paths))
+        self.assertEqual(received, [[b"%PDF-first"], [b"%PDF-second"]])
+        self.assertNotEqual(paths[0], paths[1])
+
+    def test_legacy_history_migration_preserves_bom_record(self):
+        with sqlite3.connect(history_mod.DB_PATH) as con:
+            con.execute("""CREATE TABLE runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, run_date TEXT NOT NULL,
+                export_file TEXT NOT NULL, pdf_count INTEGER DEFAULT 0,
+                row_count INTEGER DEFAULT 0, total_inches REAL DEFAULT 0,
+                ok_rows INTEGER DEFAULT 0, warn_rows INTEGER DEFAULT 0,
+                err_rows INTEGER DEFAULT 0, mode TEXT DEFAULT 'Company',
+                project TEXT DEFAULT '', summary TEXT DEFAULT '', output_path TEXT DEFAULT '')""")
+            con.execute("INSERT INTO runs (run_date,export_file,row_count,total_inches) VALUES (?,?,?,?)",
+                        ("2026-01-01 10:00", "old.xlsx", 5, 12.5))
+        con.close()
+        for _ in range(2):
+            rows = self.client.get("/api/history").get_json()
+            self.assertEqual(rows[0]["run_type"], "BOM / Inches")
+            self.assertEqual(rows[0]["pdf_filenames"], [])
+            self.assertEqual(rows[0]["export_file"], "old.xlsx")
+            self.assertEqual(rows[0]["row_count"], 5)
+            self.assertEqual(rows[0]["total_inches"], 12.5)
+        self.assertEqual(self.client.get("/api/history/1").get_json(), rows[0])
+
+    def test_combined_bom_and_spool_history_download_and_delete(self):
+        bom = {"ok": True, "rows": 3, "total_inches": 42, "output_filename": "bom.xlsx"}
+        with mock.patch.object(app_mod, "run_bom", return_value=bom):
+            response = self.client.post("/api/run", data={"pdfs": (io.BytesIO(b"bom"), "bom.pdf")})
+        self.assertEqual(response.status_code, 200)
+        spool = {"ok": True, "rows": [{"Mark": "1"}], "row_count": 1,
+                 "output_filename": "spool.xlsx", "diagnostics": [{"warnings": ["Check title"]}]}
+        (self.exports_dir / "spool.xlsx").write_bytes(b"excel-result")
+        with mock.patch.object(app_mod, "run_spool_reader", return_value=spool):
+            response = self.client.post("/api/spool-reader/run", data={
+                "pdfs": [(io.BytesIO(b"one"), "one.pdf"), (io.BytesIO(b"two"), "two.pdf")]})
+        self.assertEqual(response.status_code, 200)
+        rows = self.client.get("/api/history").get_json()
+        self.assertEqual([row["run_type"] for row in rows], ["Spool Drawing Reader", "BOM / Inches"])
+        self.assertEqual(rows[0]["pdf_filenames"], ["one.pdf", "two.pdf"])
+        self.assertEqual(rows[0]["pdf_count"], 2)
+        self.assertEqual(rows[0]["row_count"], 1)
+        self.assertEqual(rows[0]["warn_rows"], 1)
+        self.assertTrue(rows[0]["run_date"])
+        self.assertEqual(rows[1]["total_inches"], 42)
+        self.assertEqual(rows[1]["row_count"], 3)
+        download = self.client.get("/api/download/" + rows[0]["export_file"])
+        self.assertEqual(download.data, b"excel-result")
+        download.close()
+        self.assertEqual(self.client.delete("/api/history/" + str(rows[0]["id"])).status_code, 200)
+        self.assertEqual(len(self.client.get("/api/history").get_json()), 1)
+
+    def test_failed_spool_run_is_recorded(self):
+        with mock.patch.object(app_mod, "run_spool_reader", side_effect=ValueError("bad PDF")):
+            response = self.client.post("/api/spool-reader/run", data={"pdfs": (io.BytesIO(b"bad"), "bad.pdf")})
+        self.assertEqual(response.status_code, 500)
+        row = self.client.get("/api/history").get_json()[0]
+        self.assertEqual(row["run_type"], "Spool Drawing Reader")
+        self.assertEqual(row["pdf_filenames"], ["bad.pdf"])
+        self.assertEqual(row["err_rows"], 1)
+        self.assertEqual(row["export_file"], "")
+
+    def test_overlay_requires_both_pdf_sets(self):
+        for data in ({}, {"old_pdfs": (io.BytesIO(b"x"), "old.pdf")},
+                     {"old_pdfs": (io.BytesIO(b"x"), "old.txt"), "new_pdfs": (io.BytesIO(b"x"), "new.pdf")}):
+            self.assertEqual(self.client.post("/api/spool-reader/overlay", data=data).status_code, 400)
+
+    def test_overlay_history_sides_download_and_cleanup(self):
+        captured = []
+        def run(old, new, name, directory, **kwargs):
+            captured.extend(old + new)
+            self.assertEqual([p.read_bytes() for p in old], [b"OLD"])
+            self.assertEqual([p.read_bytes() for p in new], [b"NEW"])
+            (directory / "overlay.xlsx").write_bytes(b"excel")
+            return {"ok": True, "rows": [], "row_count": 2, "output_filename": "overlay.xlsx", "diagnostics": [], "warn_rows": 1}
+        with mock.patch.object(app_mod, "run_overlay", side_effect=run):
+            response = self.client.post("/api/spool-reader/overlay", data={
+                "old_pdfs": (io.BytesIO(b"OLD"), "old.pdf"), "new_pdfs": (io.BytesIO(b"NEW"), "new.pdf")})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(all(not path.exists() for path in captured))
+        row = self.client.get("/api/history").get_json()[0]
+        self.assertEqual(row["run_type"], "Spool Overlay")
+        self.assertEqual(row["run_metadata"], {"old_filenames": ["old.pdf"], "new_filenames": ["new.pdf"]})
+        self.assertEqual(row["row_count"], 2)
+        download = self.client.get("/api/download/overlay.xlsx")
+        self.assertEqual(download.data, b"excel"); download.close()
+
+    def test_overlay_failure_history_and_cleanup(self):
+        captured = []
+        def fail(old, new, *args, **kwargs):
+            captured.extend(old + new)
+            raise ValueError("failed comparison")
+        with mock.patch.object(app_mod, "run_overlay", side_effect=fail):
+            response = self.client.post("/api/spool-reader/overlay", data={
+                "old_pdfs": (io.BytesIO(b"OLD"), "old.pdf"), "new_pdfs": (io.BytesIO(b"NEW"), "new.pdf")})
+        self.assertEqual(response.status_code, 500)
+        self.assertTrue(all(not path.exists() for path in captured))
+        self.assertEqual(self.client.get("/api/history").get_json()[0]["err_rows"], 1)
 
     def test_healthcheck_reports_ok(self):
         response = self.client.get("/health")
@@ -142,6 +260,31 @@ class AppTestCase(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("Project name is required", response.get_json()["error"])
+
+    def test_spool_reader_accepts_multiple_pdfs_and_returns_combined_rows(self):
+        expected = {
+            "ok": True, "rows": [{"Fab Number": "B001", "Mark": "1"}],
+            "row_count": 1, "diagnostics": [], "output_filename": "spools.xlsx",
+        }
+        with mock.patch.object(app_mod, "run_spool_reader", return_value=expected) as run:
+            response = self.client.post(
+                "/api/spool-reader/run",
+                data={"export_filename": "spools", "pdfs": [(io.BytesIO(b"one"), "one.pdf"), (io.BytesIO(b"two"), "two.pdf")]},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["rows"], expected["rows"])
+        self.assertEqual(len(run.call_args.args[0]), 2)
+        self.assertTrue(all(not Path(path).exists() for path in run.call_args.args[0]))
+
+    def test_spool_reader_rejects_non_pdf_uploads(self):
+        response = self.client.post(
+            "/api/spool-reader/run",
+            data={"pdfs": (io.BytesIO(b"text"), "notes.txt")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "No valid PDF files received")
 
     def test_load_settings_recovers_from_backup_when_primary_is_invalid(self):
         settings = logic_mod.load_settings()

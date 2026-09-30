@@ -4,6 +4,8 @@ All business logic preserved exactly from the original app.py.
 Zero Tkinter dependencies. Pure Python.
 """
 
+from .export_files import reserve_export
+
 import re
 import json
 import csv
@@ -25,7 +27,7 @@ try:
 except Exception:
     legend_embedded = None
 
-APP_NAME    = "Fabrication BOM Tool"
+APP_NAME    = "FabCore"
 APP_VERSION = "2026.3.3"
 DEFAULT_ADMIN_PASSWORD = "FBT2026!"
 logger = logging.getLogger(__name__)
@@ -1121,179 +1123,180 @@ def run_bom(pdf_paths: list, settings: dict, export_filename: str, mode: str, pr
     out_filename = str(export_filename or "BOM_Export").strip() or "BOM_Export"
     if not out_filename.endswith(".xlsx"):
         out_filename += ".xlsx"
-    out_path = EXPORTS_DIR / out_filename
+    with reserve_export(EXPORTS_DIR, out_filename) as out_path:
+        out_filename = out_path.name
 
-    if not dfs:
+        if not dfs:
+            with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+                pd.DataFrame(columns=[]).to_excel(writer, sheet_name="Master", index=False)
+                pd.DataFrame(errors).to_excel(writer, sheet_name="Errors", index=False)
+                pd.DataFrame(columns=["Material Type", "Total Inches"]).to_excel(
+                    writer,
+                    sheet_name="Summary",
+                    index=False,
+                )
+            format_excel(out_path)
+            return {
+                "ok": True,
+                "total_inches": 0,
+                "rows": 0,
+                "ok_rows": 0,
+                "warn_rows": 0,
+                "err_rows": 0,
+                "errors": len(errors),
+                "output": str(out_path),
+                "output_filename": out_filename,
+                "summary": f"No rows extracted.\n\n{format_error_summary(errors)}",
+            }
+
+        df = pd.concat(dfs, ignore_index=True).drop_duplicates()
+        df.insert(0, "Row ID", range(1, len(df) + 1))
+        df["Row Status"] = "OK"
+        df["Row Issues"] = ""
+
+        df["Fitting Type"] = df["Description"].apply(
+            lambda desc: classify_fitting_type_with_legend(desc, legend_maps)
+        )
+
+        ex_map = settings.get("exclude_fitting_types", {})
+        df = df[~df["Fitting Type"].map(lambda x: bool(ex_map.get(x, False)))].copy()
+        df["Row ID"] = range(1, len(df) + 1)
+
+        df["Material Type"] = df["Material"].apply(
+            lambda m: material_type_from_material(m, settings.get("material_types", MATERIAL_TYPE_PRESET))
+        )
+
+        diameters = []
+        for idx, row in df.iterrows():
+            try:
+                diameter = size_to_diameter_in(row.get("Size", ""))
+                diameters.append(round(float(diameter), 4))
+            except Exception as exc:
+                diameters.append(None)
+                msg = f"Size parse failed -> {type(exc).__name__}: {exc}"
+                df.at[idx, "Row Status"] = "Error"
+                df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
+                errors.append({
+                    "Stage": "Row Parse",
+                    "Source File": row.get("Source File", ""),
+                    "Row ID": int(df.at[idx, "Row ID"]),
+                    "Issue": msg,
+                })
+        df["Diameter (in)"] = diameters
+
+        df["Side Multiplier"] = df.apply(
+            lambda row: get_effective_multiplier(
+                settings,
+                project,
+                str(row.get("Material Type", "UNKNOWN")),
+                str(row.get("Fitting Type", "Unclassified")),
+            ),
+            axis=1,
+        )
+
+        total_inches = []
+        for idx, row in df.iterrows():
+            count = row.get("Count", None)
+            diameter = row.get("Diameter (in)", None)
+            if count is None or (isinstance(count, float) and pd.isna(count)):
+                total_inches.append(None)
+                msg = "Missing Count -> Total Inches not calculated"
+                if df.at[idx, "Row Status"] != "Error":
+                    df.at[idx, "Row Status"] = "Warning"
+                df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
+                errors.append({
+                    "Stage": "Row Calc",
+                    "Source File": row.get("Source File", ""),
+                    "Row ID": int(df.at[idx, "Row ID"]),
+                    "Issue": msg,
+                })
+                continue
+            if diameter is None or (isinstance(diameter, float) and pd.isna(diameter)):
+                total_inches.append(None)
+                msg = "Missing/Invalid Diameter -> Total Inches not calculated"
+                df.at[idx, "Row Status"] = "Error"
+                df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
+                errors.append({
+                    "Stage": "Row Calc",
+                    "Source File": row.get("Source File", ""),
+                    "Row ID": int(df.at[idx, "Row ID"]),
+                    "Issue": msg,
+                })
+                continue
+            try:
+                inches = float(diameter) * float(count) * float(row.get("Side Multiplier", FALLBACK_MULTIPLIER))
+                total_inches.append(round(inches, 2))
+            except Exception as exc:
+                total_inches.append(None)
+                msg = f"Total Inches calc failed -> {type(exc).__name__}: {exc}"
+                df.at[idx, "Row Status"] = "Error"
+                df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
+                errors.append({
+                    "Stage": "Row Calc",
+                    "Source File": row.get("Source File", ""),
+                    "Row ID": int(df.at[idx, "Row ID"]),
+                    "Issue": msg,
+                })
+        df["Total Inches"] = total_inches
+
+        df = df.sort_values(
+            ["Batch", "Material Type", "Fitting Type", "Size", "Install Type", "Description"]
+        ).reset_index(drop=True)
+
+        numeric_ti = pd.to_numeric(df["Total Inches"], errors="coerce").fillna(0)
+        total_val = float(numeric_ti.sum())
+        inches_by_mat = df.assign(_ti=numeric_ti).groupby("Material Type")["_ti"].sum().sort_values(ascending=False)
+        summary_df = inches_by_mat.rename_axis("Material Type").reset_index(name="Total Inches")
+        summary_total_row = pd.DataFrame([{"Material Type": "TOTAL", "Total Inches": round(total_val, 2)}])
+        summary_df = pd.concat([summary_df, summary_total_row], ignore_index=True)
+
+        total_row = {c: "" for c in df.columns}
+        total_row["Batch"] = "TOTAL"
+        total_row["Total Inches"] = round(total_val, 2)
+        df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+
+        errors_df = pd.DataFrame(errors)
         with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-            pd.DataFrame(columns=[]).to_excel(writer, sheet_name="Master", index=False)
-            pd.DataFrame(errors).to_excel(writer, sheet_name="Errors", index=False)
-            pd.DataFrame(columns=["Material Type", "Total Inches"]).to_excel(
-                writer,
-                sheet_name="Summary",
-                index=False,
-            )
+            df.to_excel(writer, sheet_name="Master", index=False)
+            summary_df.to_excel(writer, sheet_name="Summary", index=False)
+            if not errors_df.empty:
+                errors_df.to_excel(writer, sheet_name="Errors", index=False)
         format_excel(out_path)
+
+        ok_rows = int((df["Row Status"] == "OK").sum()) if "Row Status" in df.columns else 0
+        warn_rows = int((df["Row Status"] == "Warning").sum()) if "Row Status" in df.columns else 0
+        err_rows = int((df["Row Status"] == "Error").sum()) if "Row Status" in df.columns else 0
+
+        summary_lines = [
+            f"{APP_NAME} - SUMMARY",
+            f"Version: {APP_VERSION}",
+            f"Multiplier Mode: {'One-Off (Project Override)' if mode == 'Project' else 'Company Wide (Default)'}",
+            f"Project Override: {project if mode == 'Project' else '(none)'}",
+            "------",
+            f"PDFs processed: {len(pdf_paths)}",
+            f"Rows exported (incl. issues): {len(df) - 1}",
+            f"Row Status: OK={ok_rows}  Warning={warn_rows}  Error={err_rows}",
+            f"Errors logged: {len(errors)}",
+            "",
+            f"TOTAL INCHES: {total_val:,.2f}",
+            "",
+            "TOTAL INCHES BY MATERIAL TYPE:",
+        ]
+        for material, value in inches_by_mat.items():
+            summary_lines.append(f"  - {material}: {value:,.2f}")
+        if errors:
+            summary_lines += ["", format_error_summary(errors)]
+        summary_lines += ["", "Output file:", str(out_path)]
+
         return {
             "ok": True,
-            "total_inches": 0,
-            "rows": 0,
-            "ok_rows": 0,
-            "warn_rows": 0,
-            "err_rows": 0,
+            "total_inches": round(total_val, 2),
+            "rows": len(df) - 1,
+            "ok_rows": ok_rows,
+            "warn_rows": warn_rows,
+            "err_rows": err_rows,
             "errors": len(errors),
             "output": str(out_path),
             "output_filename": out_filename,
-            "summary": f"No rows extracted.\n\n{format_error_summary(errors)}",
+            "summary": "\n".join(summary_lines),
         }
-
-    df = pd.concat(dfs, ignore_index=True).drop_duplicates()
-    df.insert(0, "Row ID", range(1, len(df) + 1))
-    df["Row Status"] = "OK"
-    df["Row Issues"] = ""
-
-    df["Fitting Type"] = df["Description"].apply(
-        lambda desc: classify_fitting_type_with_legend(desc, legend_maps)
-    )
-
-    ex_map = settings.get("exclude_fitting_types", {})
-    df = df[~df["Fitting Type"].map(lambda x: bool(ex_map.get(x, False)))].copy()
-    df["Row ID"] = range(1, len(df) + 1)
-
-    df["Material Type"] = df["Material"].apply(
-        lambda m: material_type_from_material(m, settings.get("material_types", MATERIAL_TYPE_PRESET))
-    )
-
-    diameters = []
-    for idx, row in df.iterrows():
-        try:
-            diameter = size_to_diameter_in(row.get("Size", ""))
-            diameters.append(round(float(diameter), 4))
-        except Exception as exc:
-            diameters.append(None)
-            msg = f"Size parse failed -> {type(exc).__name__}: {exc}"
-            df.at[idx, "Row Status"] = "Error"
-            df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Parse",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
-    df["Diameter (in)"] = diameters
-
-    df["Side Multiplier"] = df.apply(
-        lambda row: get_effective_multiplier(
-            settings,
-            project,
-            str(row.get("Material Type", "UNKNOWN")),
-            str(row.get("Fitting Type", "Unclassified")),
-        ),
-        axis=1,
-    )
-
-    total_inches = []
-    for idx, row in df.iterrows():
-        count = row.get("Count", None)
-        diameter = row.get("Diameter (in)", None)
-        if count is None or (isinstance(count, float) and pd.isna(count)):
-            total_inches.append(None)
-            msg = "Missing Count -> Total Inches not calculated"
-            if df.at[idx, "Row Status"] != "Error":
-                df.at[idx, "Row Status"] = "Warning"
-            df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Calc",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
-            continue
-        if diameter is None or (isinstance(diameter, float) and pd.isna(diameter)):
-            total_inches.append(None)
-            msg = "Missing/Invalid Diameter -> Total Inches not calculated"
-            df.at[idx, "Row Status"] = "Error"
-            df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Calc",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
-            continue
-        try:
-            inches = float(diameter) * float(count) * float(row.get("Side Multiplier", FALLBACK_MULTIPLIER))
-            total_inches.append(round(inches, 2))
-        except Exception as exc:
-            total_inches.append(None)
-            msg = f"Total Inches calc failed -> {type(exc).__name__}: {exc}"
-            df.at[idx, "Row Status"] = "Error"
-            df.at[idx, "Row Issues"] = df.at[idx, "Row Issues"] + ((" | " if df.at[idx, "Row Issues"] else "") + msg)
-            errors.append({
-                "Stage": "Row Calc",
-                "Source File": row.get("Source File", ""),
-                "Row ID": int(df.at[idx, "Row ID"]),
-                "Issue": msg,
-            })
-    df["Total Inches"] = total_inches
-
-    df = df.sort_values(
-        ["Batch", "Material Type", "Fitting Type", "Size", "Install Type", "Description"]
-    ).reset_index(drop=True)
-
-    numeric_ti = pd.to_numeric(df["Total Inches"], errors="coerce").fillna(0)
-    total_val = float(numeric_ti.sum())
-    inches_by_mat = df.assign(_ti=numeric_ti).groupby("Material Type")["_ti"].sum().sort_values(ascending=False)
-    summary_df = inches_by_mat.rename_axis("Material Type").reset_index(name="Total Inches")
-    summary_total_row = pd.DataFrame([{"Material Type": "TOTAL", "Total Inches": round(total_val, 2)}])
-    summary_df = pd.concat([summary_df, summary_total_row], ignore_index=True)
-
-    total_row = {c: "" for c in df.columns}
-    total_row["Batch"] = "TOTAL"
-    total_row["Total Inches"] = round(total_val, 2)
-    df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
-
-    errors_df = pd.DataFrame(errors)
-    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        df.to_excel(writer, sheet_name="Master", index=False)
-        summary_df.to_excel(writer, sheet_name="Summary", index=False)
-        if not errors_df.empty:
-            errors_df.to_excel(writer, sheet_name="Errors", index=False)
-    format_excel(out_path)
-
-    ok_rows = int((df["Row Status"] == "OK").sum()) if "Row Status" in df.columns else 0
-    warn_rows = int((df["Row Status"] == "Warning").sum()) if "Row Status" in df.columns else 0
-    err_rows = int((df["Row Status"] == "Error").sum()) if "Row Status" in df.columns else 0
-
-    summary_lines = [
-        f"{APP_NAME} - SUMMARY",
-        f"Version: {APP_VERSION}",
-        f"Multiplier Mode: {'One-Off (Project Override)' if mode == 'Project' else 'Company Wide (Default)'}",
-        f"Project Override: {project if mode == 'Project' else '(none)'}",
-        "------",
-        f"PDFs processed: {len(pdf_paths)}",
-        f"Rows exported (incl. issues): {len(df) - 1}",
-        f"Row Status: OK={ok_rows}  Warning={warn_rows}  Error={err_rows}",
-        f"Errors logged: {len(errors)}",
-        "",
-        f"TOTAL INCHES: {total_val:,.2f}",
-        "",
-        "TOTAL INCHES BY MATERIAL TYPE:",
-    ]
-    for material, value in inches_by_mat.items():
-        summary_lines.append(f"  - {material}: {value:,.2f}")
-    if errors:
-        summary_lines += ["", format_error_summary(errors)]
-    summary_lines += ["", "Output file:", str(out_path)]
-
-    return {
-        "ok": True,
-        "total_inches": round(total_val, 2),
-        "rows": len(df) - 1,
-        "ok_rows": ok_rows,
-        "warn_rows": warn_rows,
-        "err_rows": err_rows,
-        "errors": len(errors),
-        "output": str(out_path),
-        "output_filename": out_filename,
-        "summary": "\n".join(summary_lines),
-    }

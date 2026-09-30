@@ -2,6 +2,8 @@
 "use strict";
 
 let selectedFiles = [];
+let spoolFiles = [];
+let spoolRunning = false;
 let settings = {};
 let adminUnlocked = false;
 let currentMat = "";
@@ -13,7 +15,8 @@ let projectMultipliersDirty = false;
 const ADMIN_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 
 const TABS = {
-  run:      { title: "Run",      sub: "Upload PDFs and process a batch" },
+  run:      { title: "BOM Analyzer",      sub: "Upload PDFs and process a batch" },
+  spool:    { title: "Spool Reader", sub: "Extract material callouts from spool drawings" },
   history:  { title: "History",  sub: "Past exports and run logs" },
   settings: { title: "Settings", sub: "Manage multipliers, materials, and exclusions" },
   admin:    { title: "Admin",    sub: "Password, imports/exports, and legend management" },
@@ -114,6 +117,102 @@ function updateRunButtonState() {
 
 runBtn.addEventListener("click", runBOM);
 
+const spoolDropzone = document.getElementById("spool-dropzone");
+const spoolFileInput = document.getElementById("spool-file-input");
+const spoolRunBtn = document.getElementById("spool-run-btn");
+
+document.getElementById("spool-browse-trigger").addEventListener("click", event => {
+  event.stopPropagation();
+  spoolFileInput.click();
+});
+spoolDropzone.addEventListener("click", () => spoolFileInput.click());
+spoolFileInput.addEventListener("change", () => {
+  addSpoolFiles([...spoolFileInput.files]);
+  spoolFileInput.value = "";
+});
+spoolDropzone.addEventListener("dragover", event => {
+  event.preventDefault();
+  spoolDropzone.classList.add("over");
+});
+spoolDropzone.addEventListener("dragleave", () => spoolDropzone.classList.remove("over"));
+spoolDropzone.addEventListener("drop", event => {
+  event.preventDefault();
+  spoolDropzone.classList.remove("over");
+  addSpoolFiles([...event.dataTransfer.files]);
+});
+
+function addSpoolFiles(files) {
+  spoolFiles = files.filter(file => file.name.toLowerCase().endsWith(".pdf"));
+  clearSpoolSummary();
+  renderSpoolFiles();
+}
+
+function renderSpoolFiles() {
+  const list = document.getElementById("spool-file-list");
+  list.innerHTML = "";
+  spoolFiles.forEach(file => {
+    const item = document.createElement("div");
+    item.className = "file-item";
+    item.innerHTML = `<div class="fdot"></div><div class="fname">${escHtml(file.name)}</div><span class="tag tag-blue">ready</span><button class="frem" type="button" aria-label="Remove ${escHtml(file.name)}">×</button>`;
+    item.querySelector(".frem").addEventListener("click", () => {
+      spoolFiles = spoolFiles.filter(existing => existing !== file);
+      clearSpoolSummary();
+      renderSpoolFiles();
+    });
+    list.appendChild(item);
+  });
+  spoolRunBtn.disabled = spoolRunning || spoolFiles.length === 0;
+}
+
+spoolRunBtn.addEventListener("click", async () => {
+  if (spoolRunning || !spoolFiles.length) return;
+  const submittedFiles = spoolFiles;
+  spoolRunning = true;
+  clearSpoolSummary();
+  const error = document.getElementById("spool-run-err");
+  const progress = document.getElementById("spool-prog-wrap");
+  error.textContent = "";
+  progress.style.display = "block";
+  document.getElementById("spool-prog-bar").style.width = "50%";
+  spoolRunBtn.disabled = true;
+  const form = new FormData();
+  submittedFiles.forEach(file => form.append("pdfs", file));
+  form.append("export_filename", document.getElementById("spool-export-name").value.trim() || "Spool_Drawing_Export");
+  try {
+    const data = await fetchJson("/api/spool-reader/run", { method: "POST", body: form });
+    if (spoolFiles !== submittedFiles) return;
+    renderSpoolSummary(data, submittedFiles.length);
+    showToast("Spool Reader export complete");
+  } catch (requestError) {
+    if (spoolFiles === submittedFiles) error.textContent = requestError.message;
+  } finally {
+    spoolRunning = false;
+    progress.style.display = "none";
+    document.getElementById("spool-prog-bar").style.width = "0%";
+    spoolRunBtn.disabled = spoolRunning || spoolFiles.length === 0;
+  }
+});
+
+function clearSpoolSummary() {
+  document.getElementById("spool-summary-card").style.display = "none";
+  document.getElementById("spool-summary").textContent = "";
+  document.getElementById("spool-diagnostics").textContent = "";
+  document.getElementById("spool-download").innerHTML = "";
+  document.getElementById("spool-run-err").textContent = "";
+}
+
+function renderSpoolSummary(data, pdfCount) {
+  document.getElementById("spool-summary-card").style.display = "block";
+  document.getElementById("spool-summary").textContent = `${pdfCount} PDFs processed · ${data.row_count} rows extracted · Excel: ${data.output_filename || "No export generated"}`;
+  document.getElementById("spool-diagnostics").textContent = data.diagnostics.flatMap(item =>
+    item.error ? [`${item.file}: ${item.error}`] : (item.warnings || []).map(warning => `${item.file}: ${warning}`)
+  ).join("\n") || "No warnings or errors.";
+  const download = document.getElementById("spool-download");
+  download.innerHTML = data.output_filename
+    ? `<a class="btn btn-primary full" href="/api/download/${encodeURIComponent(data.output_filename)}" download style="margin-top:12px">⬇ Download Excel</a>`
+    : "";
+}
+
 async function runBOM() {
   if (selectedFiles.length === 0) return;
 
@@ -166,7 +265,7 @@ async function runBOM() {
       dlWrap.appendChild(btn);
     }
 
-    showToast("BOM export complete");
+    showToast("BOM Analyzer export complete");
   } catch (e) {
     document.getElementById("run-err").textContent = e.message;
     document.getElementById("prog-wrap").style.display = "none";
@@ -186,19 +285,23 @@ async function loadHistory() {
     }
     const tbl = document.createElement("table");
     tbl.className = "hist-table";
-    tbl.innerHTML = "<thead><tr><th>Date</th><th>File</th><th>PDFs</th><th>Rows</th><th>Total inches</th><th>Status</th><th></th></tr></thead>";
+    tbl.innerHTML = "<thead><tr><th>Date</th><th>Run Type</th><th>File</th><th>PDFs</th><th>Rows</th><th>Total inches</th><th>Status</th><th></th></tr></thead>";
     const tbody = document.createElement("tbody");
     rows.forEach(r => {
       const warnTag = r.warn_rows > 0 ? `<span class="tag tag-amber">${r.warn_rows} warn</span>` : "";
       const errTag = r.err_rows > 0 ? `<span class="tag tag-red">${r.err_rows} err</span>` : "";
       const okTag = (!r.warn_rows && !r.err_rows) ? '<span class="tag tag-green">OK</span>' : "";
+      const historyFiles = r.run_type === "Spool Overlay"
+        ? [`OLD: ${(r.run_metadata?.old_filenames || []).join(", ")}`, `NEW: ${(r.run_metadata?.new_filenames || []).join(", ")}`]
+        : (r.pdf_filenames || []);
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td style="color:var(--tx3)">${escHtml(r.run_date || "")}</td>
+        <td><span class="tag tag-blue">${r.run_type === "Spool Overlay" ? "Spool Overlay" : r.run_type === "Spool Drawing Reader" ? "Spool Reader" : "BOM Analyzer"}</span></td>
         <td>${escHtml(r.export_file || "")}</td>
-        <td>${r.pdf_count || 0}</td>
+        <td title="${escHtml(historyFiles.join(", "))}"><span class="history-pdfs"><span>${r.pdf_count || 0}</span>${historyFiles.length ? `<span class="history-pdf-names">${historyFiles.map(escHtml).join(", ")}</span>` : ""}</span></td>
         <td>${r.row_count || 0}</td>
-        <td style="font-weight:600;color:var(--blue)">${(r.total_inches || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td style="font-weight:600;color:var(--blue)">${["Spool Drawing Reader", "Spool Overlay"].includes(r.run_type) ? "—" : (r.total_inches || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
         <td>${okTag}${warnTag}${errTag}</td>
         <td style="display:flex;gap:6px;flex-wrap:wrap">
           ${r.export_file ? `<a class="btn" href="/api/download/${encodeURIComponent(r.export_file)}" download="${escHtml(r.export_file)}" style="font-size:11px;padding:3px 10px">Download</a>` : ""}
@@ -710,7 +813,7 @@ async function exportSettings() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "FBT_settings.json";
+  a.download = "FabCore_settings.json";
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -897,4 +1000,81 @@ window.addEventListener("beforeunload", e => {
   if (!hasUnsavedMultiplierChanges()) return;
   e.preventDefault();
   e.returnValue = "";
+});
+
+// Overlay owns separate selections and requests; Standard state stays independent.
+const overlayFiles = { old: [], new: [] };
+let overlayBusy = false;
+let overlayRevision = 0;
+const overlayButton = document.getElementById("overlay-run-btn");
+function clearOverlaySummary() {
+  ["overlay-status", "overlay-error", "overlay-diagnostics", "overlay-download"].forEach(id => {
+    document.getElementById(id).textContent = "";
+  });
+}
+function renderOverlayFiles(side) {
+  const list = document.getElementById(`overlay-${side}-files`);
+  list.innerHTML = "";
+  overlayFiles[side].forEach((file, index) => {
+    const item = document.createElement("div");
+    item.className = "file-item";
+    const name = document.createElement("span"); name.className = "fname"; name.textContent = file.name;
+    const remove = document.createElement("button"); remove.className = "frem"; remove.type = "button";
+    remove.textContent = "×"; remove.setAttribute("aria-label", `Remove ${file.name}`);
+    remove.addEventListener("click", () => {
+      overlayFiles[side] = overlayFiles[side].filter((_, i) => i !== index);
+      overlayRevision++; clearOverlaySummary(); renderOverlayFiles(side);
+    });
+    item.appendChild(name); item.appendChild(remove); list.appendChild(item);
+  });
+  overlayButton.disabled = overlayBusy || !overlayFiles.old.length || !overlayFiles.new.length;
+}
+function selectOverlayFiles(side, files) {
+  overlayFiles[side] = files.filter(file => file.name.toLowerCase().endsWith(".pdf"));
+  overlayRevision++; clearOverlaySummary(); renderOverlayFiles(side);
+}
+["old", "new"].forEach(side => {
+  const input = document.getElementById(`overlay-${side}-input`);
+  const zone = document.getElementById(`overlay-${side}-dropzone`);
+  document.getElementById(`overlay-${side}-browse`).addEventListener("click", event => { event.stopPropagation(); input.click(); });
+  zone.addEventListener("click", () => input.click());
+  input.addEventListener("change", () => { selectOverlayFiles(side, [...input.files]); input.value = ""; });
+  zone.addEventListener("dragover", event => { event.preventDefault(); zone.classList.add("over"); });
+  zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+  zone.addEventListener("drop", event => { event.preventDefault(); zone.classList.remove("over"); selectOverlayFiles(side, [...event.dataTransfer.files]); });
+});
+document.getElementById("spool-mode").addEventListener("change", event => {
+  const overlay = event.target.value === "overlay";
+  document.getElementById("spool-standard-panel").hidden = overlay;
+  document.getElementById("spool-overlay-panel").hidden = !overlay;
+});
+overlayButton.addEventListener("click", async () => {
+  if (overlayBusy || !overlayFiles.old.length || !overlayFiles.new.length) return;
+  const revision = overlayRevision;
+  const counts = { old: overlayFiles.old.length, new: overlayFiles.new.length };
+  const form = new FormData();
+  ["old", "new"].forEach(side => overlayFiles[side].forEach(file => form.append(`${side}_pdfs`, file)));
+  form.append("export_filename", document.getElementById("overlay-export-name").value.trim() || "Spool_Overlay");
+  overlayBusy = true; overlayButton.disabled = true; clearOverlaySummary();
+  document.getElementById("overlay-status").textContent = "Comparing OLD and NEW drawings…";
+  try {
+    const data = await fetchJson("/api/spool-reader/overlay", { method: "POST", body: form });
+    if (revision !== overlayRevision) return;
+    document.getElementById("overlay-status").textContent = `${counts.old} OLD PDFs · ${counts.new} NEW PDFs · ${data.counts?.Added || 0} Added · ${data.counts?.Removed || 0} Removed · ${data.counts?.Modified || 0} Modified · ${data.counts?.Unchanged || 0} Unchanged · Excel: ${data.output_filename}`;
+    document.getElementById("overlay-diagnostics").textContent = (data.diagnostics || []).flatMap(d =>
+      (d.error ? [d.error] : d.warnings || []).map(message => `${d.side} ${d.file}: ${message}`)).join("\n");
+    if (data.output_filename) {
+      const link = document.createElement("a"); link.className = "btn btn-primary";
+      link.href = `/api/download/${encodeURIComponent(data.output_filename)}`; link.download = data.output_filename;
+      link.textContent = "Download Excel"; document.getElementById("overlay-download").appendChild(link);
+    }
+  } catch (error) {
+    if (revision === overlayRevision) {
+      document.getElementById("overlay-status").textContent = "";
+      document.getElementById("overlay-error").textContent = error.message;
+    }
+  } finally {
+    overlayBusy = false;
+    overlayButton.disabled = !overlayFiles.old.length || !overlayFiles.new.length;
+  }
 });
