@@ -32,6 +32,8 @@ from .core.logic import (
     save_settings,
     set_admin_password,
 )
+from .core.spool_reader import run_spool_reader
+from .core.spool_overlay import run_overlay
 
 MAX_CONTENT_LENGTH = 128 * 1024 * 1024
 DEFAULT_HOST = os.getenv("FBT_HOST", "0.0.0.0")
@@ -256,6 +258,92 @@ def create_app() -> Flask:
             result["run_id"] = None
 
         return jsonify(result)
+
+    @app.post("/api/spool-reader/run")
+    def api_spool_reader_run():
+        files = request.files.getlist("pdfs")
+        if not files or all(not item.filename for item in files):
+            return jsonify({"ok": False, "error": "No PDF files uploaded"}), 400
+        export_filename = sanitize_export_filename(
+            request.form.get("export_filename", "Spool_Drawing_Export")
+        )
+        saved_paths: list[Path] = []
+        original_names = []
+        status = 200
+        try:
+            for item in files:
+                if not item.filename or not item.filename.lower().endswith(".pdf"):
+                    continue
+                destination = upload_dir / f"{uuid4().hex}_{Path(item.filename).name}"
+                item.save(destination)
+                saved_paths.append(destination)
+                original_names.append(Path(item.filename).name)
+            if not saved_paths:
+                return jsonify({"ok": False, "error": "No valid PDF files received"}), 400
+            result = run_spool_reader(saved_paths, export_filename, EXPORTS_DIR)
+            diagnostics = result.get("diagnostics", [])
+            result["warn_rows"] = sum(len(item.get("warnings", [])) for item in diagnostics)
+            result["err_rows"] = sum(bool(item.get("error")) for item in diagnostics)
+        except Exception as exc:
+            app.logger.exception("Spool reader run failed")
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "err_rows": 1,
+                      "summary": f"{type(exc).__name__}: {exc}"}
+            status = 500
+        finally:
+            for path in saved_paths:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    app.logger.warning("Failed to remove temporary upload %s", path)
+
+        try:
+            result["run_id"] = save_run(result, original_names, "", "", run_type="Spool Drawing Reader")
+        except Exception:
+            app.logger.exception("Failed to persist spool run history")
+            result["run_id"] = None
+        return jsonify(result), status
+
+    @app.post("/api/spool-reader/overlay")
+    def api_spool_overlay():
+        uploads = {side: request.files.getlist(side + "_pdfs") for side in ("old", "new")}
+        for side, files in uploads.items():
+            if not files or any(not f.filename or not f.filename.lower().endswith(".pdf") for f in files):
+                return jsonify({"ok": False, "error": f"Select one or more PDF files for {side.upper()}."}), 400
+        export_name = sanitize_export_filename(request.form.get("export_filename", "Spool_Overlay"))
+        paths, names = {"old": [], "new": []}, {"old": [], "new": []}
+        status = 200
+        try:
+            for side, files in uploads.items():
+                for item in files:
+                    name = item.filename.replace("\\", "/").rsplit("/", 1)[-1]
+                    destination = upload_dir / f"{uuid4().hex}_{name}"
+                    paths[side].append(destination)
+                    names[side].append(name)
+                    item.save(destination)
+            result = run_overlay(paths["old"], paths["new"], export_name, EXPORTS_DIR, source_names=names)
+            name_map = {p.name: name for side in paths for p, name in zip(paths[side], names[side])}
+            for diagnostic in result.get("diagnostics", []):
+                diagnostic["file"] = name_map.get(diagnostic["file"], diagnostic["file"])
+        except Exception as exc:
+            app.logger.exception("Spool overlay failed")
+            result = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "err_rows": 1,
+                      "summary": f"{type(exc).__name__}: {exc}"}
+            status = 500
+        finally:
+            for side in paths:
+                for path in paths[side]:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        app.logger.warning("Failed to remove temporary overlay upload %s", path)
+        try:
+            result["run_id"] = save_run(result, names["old"] + names["new"], "", "", run_type="Spool Overlay",
+                                        run_metadata={"old_filenames": names["old"], "new_filenames": names["new"]})
+        except Exception:
+            app.logger.exception("Failed to persist overlay history")
+            result["run_id"] = None
+            result.setdefault("diagnostics", []).append({"side": "History", "file": "", "error": "Could not save run history."})
+        return jsonify(result), status
 
     @app.get("/api/download/<path:filename>")
     def api_download(filename: str):
